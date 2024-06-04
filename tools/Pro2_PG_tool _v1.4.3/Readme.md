@@ -1,4 +1,4 @@
-### Nor flash
+# Nor flash
 - fw1_address --- 0x60000
 - ISP_address_PT_ISP_IQ --- 0x460000
 - NN_address_PT_NN_MDL --- 0x530000

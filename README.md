@@ -1,4 +1,4 @@
-### ameba-rtos-pro2
+# ameba-rtos-pro2
 PLease refer to this document for the compile environment of the SDK.
 
 ## Application Notes
