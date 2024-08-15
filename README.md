@@ -12,3 +12,9 @@ PLease refer to this document for the compile environment of the SDK.
 
 ## image tools
 [Pro2_PG_tool _v1.4.3](https://github.com/Ameba-AIoT/ameba-rtos-pro2/tree/main/tools/Pro2_PG_tool%20_v1.4.3)
+
+## License
+
+This project is licensed - see the [LICENSE](https://github.com/Ameba-AIoT/ameba-rtos-pro2/blob/main/Realtek_Disclaimer-2019.pdf) file for details.
+
+© 2024 Realtek Semiconductor Corp. All rights reserved.
