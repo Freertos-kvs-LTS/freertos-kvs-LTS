@@ -138,8 +138,11 @@ hal_status_t hal_i2c_init(hal_i2c_adapter_t *phal_i2c_adapter, uint32_t scl_pin,
 hal_status_t hal_i2c_deinit(hal_i2c_adapter_t *phal_i2c_adapter)
 {
 	hal_status_t retv;
-
+#if IS_AFTER_CUT_E(CONFIG_CHIP_VER)
 	retv = __rom_stubs_hal_i2c.hal_i2c_deinit(phal_i2c_adapter);
+#else
+	retv = hal_rtl_i2c_deinit_patch(phal_i2c_adapter);
+#endif
 	if (retv != HAL_OK) {
 		return retv;
 	} else {

@@ -174,6 +174,14 @@ int wifi_set_tcp_protocol_keepalive(int socket_fd, uint8_t power_bit)
 	return 0;
 }
 
+extern void rtw_hal_set_unicast_wakeup(u8 enable);
+void wifi_set_unicast_wakeup(u8 enable)
+{
+	rtw_hal_set_unicast_wakeup(enable);
+	netif_set_link_down(&xnetif[0]);
+	return;
+}
+
 extern void rtw_set_keepalive_offload(uint8_t *eth_frame, uint32_t frame_len, uint32_t interval_ms, uint32_t resend_ms, uint8_t wake_sys);
 int wifi_set_tcp_protocol_keepalive_offload(int socket_fd, uint8_t power_bit)
 {
@@ -858,19 +866,21 @@ int wifi_wowlan_set_bcn_track(u8  start_window,
 extern void rtw_set_pno_scan(u8  start_window,
 							 u8  max_window,
 							 u8  increment_steps,
-							 u8  scan_period,
+							 u8  passive_cnt,
+							 u8  active_cnt,
 							 u32 duration,
 							 u8  interval_time);
 
 int wifi_wowlan_set_pno_scan(u8  start_window,
 							 u8  max_window,
 							 u8  increment_steps,
-							 u8  scan_period,
+							 u8  passive_cnt,
+							 u8  active_cnt,
 							 u32 duration,
 							 u8  interval_time)
 {
 	int ret = 0;
-	rtw_set_pno_scan(start_window, max_window, increment_steps, scan_period, duration, interval_time);
+	rtw_set_pno_scan(start_window, max_window, increment_steps, passive_cnt, active_cnt, duration, interval_time);
 	return ret;
 }
 #endif

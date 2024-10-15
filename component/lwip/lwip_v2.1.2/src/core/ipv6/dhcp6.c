@@ -135,7 +135,7 @@ struct dhcp6_option_info dhcp6_rx_options[DHCP6_OPTION_IDX_MAX];
 #define dhcp6_get_option_length(dhcp6, idx)      (dhcp6_rx_options[idx].val_length)
 #define dhcp6_set_option(dhcp6, idx, start, len) do { dhcp6_rx_options[idx].val_start = (start); dhcp6_rx_options[idx].val_length = (len); }while(0)
 
-extern int rtw_get_random_bytes(void* dst, u32 size);
+extern int rtw_get_random_bytes(void* dst, u32_t size);
 extern void *pvPortMalloc( size_t xWantedSize );
 extern void nd6_restart_netif(struct netif *netif);
 

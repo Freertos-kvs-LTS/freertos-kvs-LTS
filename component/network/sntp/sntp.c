@@ -258,6 +258,23 @@ struct tm sntp_gen_system_time(int timezone)
 #endif
 
 /**
+ * SNTP Set Max tries when sntp update, must be called before @ref sntp_init
+ */
+static unsigned int sntp_max_tries = 0;
+static unsigned int sntp_tries = 0;
+void sntp_set_max_tries(unsigned int tries)
+{
+	sntp_max_tries = tries;
+}
+
+#define SNTP_EVENT_RECV_OK  1
+#define SNTP_EVENT_MAX_TRY  2
+static void sntp_callback(u8_t event)
+{
+
+}
+
+/**
  * SNTP Change time server address, must be called before @ref sntp_init
  */
 static const char *sntp_server_addresses[];
@@ -489,6 +506,7 @@ sntp_retry(void *arg)
 								   sntp_retry_timeout));
 
 	/* set up a timer to send a retry and increase the retry delay */
+	sys_untimeout(sntp_request, NULL);
 	sys_timeout(sntp_retry_timeout, sntp_request, NULL);
 
 #if SNTP_RETRY_TIMEOUT_EXP
@@ -611,6 +629,12 @@ sntp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, ip_addr_t *addr, u16_t
 		sys_timeout((u32_t)SNTP_UPDATE_DELAY, sntp_request, NULL);
 		LWIP_DEBUGF(SNTP_DEBUG_STATE, ("sntp_recv: Scheduled next time request: %"U32_F" ms\n",
 									   (u32_t)SNTP_UPDATE_DELAY));
+
+		// Realtek added
+		sntp_callback(SNTP_EVENT_RECV_OK);
+		if (sntp_max_tries) {
+			sntp_tries = 0;
+		}
 	} else if (err == SNTP_ERR_KOD) {
 		/* Kiss-of-death packet. Use another server or increase UPDATE_DELAY. */
 		sntp_try_next_server(NULL);
@@ -639,6 +663,7 @@ sntp_send_request(ip_addr_t *server_addr)
 		/* free the pbuf after sending it */
 		pbuf_free(p);
 		/* set up receive timeout: try next server or retry on timeout */
+		sys_untimeout(sntp_try_next_server, NULL);
 		sys_timeout((u32_t)SNTP_RECV_TIMEOUT, sntp_try_next_server, NULL);
 #if SNTP_CHECK_RESPONSE >= 1
 		/* save server address to verify it in sntp_recv */
@@ -648,6 +673,7 @@ sntp_send_request(ip_addr_t *server_addr)
 		LWIP_DEBUGF(SNTP_DEBUG_SERIOUS, ("sntp_send_request: Out of memory, trying again in %"U32_F" ms\n",
 										 (u32_t)SNTP_RETRY_TIMEOUT));
 		/* out of memory: set up a timer to send a retry */
+		sys_untimeout(sntp_request, NULL);
 		sys_timeout((u32_t)SNTP_RETRY_TIMEOUT, sntp_request, NULL);
 	}
 }
@@ -669,7 +695,14 @@ sntp_dns_found(const char *hostname, ip_addr_t *ipaddr, void *arg)
 	} else {
 		/* DNS resolving failed -> try another server */
 		LWIP_DEBUGF(SNTP_DEBUG_WARN_STATE, ("sntp_dns_found: Failed to resolve server address resolved, trying next server\n"));
+
+// Realtek modified to prevent dns query during dns timeout modifying dns table
+#if 0
 		sntp_try_next_server(NULL);
+#else
+		sys_untimeout(sntp_try_next_server, NULL);
+		sys_timeout((u32_t)SNTP_RETRY_TIMEOUT, sntp_try_next_server, NULL);
+#endif
 	}
 }
 #endif /* SNTP_SERVER_DNS */
@@ -686,6 +719,21 @@ sntp_request(void *arg)
 	err_t err;
 
 	LWIP_UNUSED_ARG(arg);
+
+	// Realtek added
+	if (sntp_max_tries) {
+		if (sntp_tries <= sntp_max_tries) {
+			sntp_tries ++;
+
+			if (sntp_tries > sntp_max_tries) {
+				sys_untimeout(sntp_request, NULL);
+				sys_timeout((u32_t)SNTP_UPDATE_DELAY, sntp_request, NULL);
+				sntp_callback(SNTP_EVENT_MAX_TRY);
+				sntp_tries = 0;
+				return;
+			}
+		}
+	}
 
 	/* initialize SNTP server address */
 #if SNTP_SERVER_DNS
@@ -707,6 +755,7 @@ sntp_request(void *arg)
 	} else {
 		/* address conversion failed, try another server */
 		LWIP_DEBUGF(SNTP_DEBUG_WARN_STATE, ("sntp_request: Invalid server address, trying next server.\n"));
+		sys_untimeout(sntp_try_next_server, NULL);
 		sys_timeout((u32_t)SNTP_RETRY_TIMEOUT, sntp_try_next_server, NULL);
 	}
 }
@@ -741,6 +790,7 @@ sntp_stop(void)
 {
 	if (sntp_pcb != NULL) {
 		sys_untimeout(sntp_request, NULL);
+		sys_untimeout(sntp_try_next_server, NULL);
 		udp_remove(sntp_pcb);
 		sntp_pcb = NULL;
 	}
@@ -766,6 +816,20 @@ int atcmd_sntp(char *hostname)
 	return err;
 }
 
+#if LWIP_DHCP && LWIP_DHCP_GET_NTP_SRV
+static char dhcp_sntp_server_addresses[LWIP_DHCP_MAX_NTP_SERVERS * 16] = {0};
+void dhcp_set_ntp_servers(u8_t num, const ip4_addr_t *server)
+{
+	if (num) {
+		for (int i = 0; (i < num) && (i < LWIP_DHCP_MAX_NTP_SERVERS) && (i < sizeof(sntp_server_addresses) / sizeof(char *)); i ++) {
+			memset(&dhcp_sntp_server_addresses[i * 16], 0, 16);
+			if (ip4addr_ntoa_r(&server[i], &dhcp_sntp_server_addresses[i * 16], 16) != NULL) {
+				sntp_server_addresses[i] = &dhcp_sntp_server_addresses[i * 16];
+			}
+		}
+	}
+}
+#endif
 
 
 #endif /* LWIP_UDP */

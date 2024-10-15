@@ -89,6 +89,8 @@ void i2s_init(i2s_t *obj, PinName sck, PinName ws, PinName sd_tx0, PinName sd_rx
 		pin_id = PID_I2S1;
 	} else {
 		DBG_I2S_ERR("i2s_init : i2s pin is invalid. Need to select sck and ws \r\n");
+		obj->i2s_initialized = 0;
+		return;
 	}
 
 	if (pin_id != 0) {
@@ -105,6 +107,8 @@ void i2s_init(i2s_t *obj, PinName sck, PinName ws, PinName sd_tx0, PinName sd_rx
 			check_temp |= ret;
 			if (ret != HAL_OK) {
 				DBG_I2S_ERR("i2s_init : i2s pin[%d] is invalid. \r\n", i);
+				obj->i2s_initialized = 0;
+				return;
 			}
 		}
 
@@ -112,15 +116,19 @@ void i2s_init(i2s_t *obj, PinName sck, PinName ws, PinName sd_tx0, PinName sd_rx
 			ret = hal_i2s_init(pi2s_adapter);
 			if (ret != HAL_OK) {
 				DBG_I2S_ERR("i2s_init is failure\r\n");
+				obj->i2s_initialized = 0;
+				return;
 			} else {
 				pi2s_adapter->dcache_memory_en = 1;
 				hal_i2s_set_parameter(pi2s_adapter, &i2s_def_setting);
 			}
 		} else {
 			DBG_I2S_ERR("i2s_init is failure because I2S pins is invalid. \r\n");
+			obj->i2s_initialized = 0;
+			return;
 		}
 	}
-
+	obj->i2s_initialized = 1;
 }
 
 void i2s_set_dma_buffer(i2s_t *obj, char *tx_buf, char *rx_buf,
@@ -167,6 +175,22 @@ void i2s_set_direction(i2s_t *obj, int trx_type)
 	hal_i2s_adapter_t *pi2s_adapter = &obj->i2s_adapter;
 
 	hal_i2s_set_direction(pi2s_adapter, (uint8_t)trx_type);
+	if (trx_type == I2S_DIR_TX) {
+		hal_i2s_set_loopback(pi2s_adapter, 1);
+	} else {
+		hal_i2s_set_loopback(pi2s_adapter, 0);
+	}
+}
+
+uint32_t i2s_get_direction(i2s_t *obj)
+{
+	hal_i2s_adapter_t *pi2s_adapter = &obj->i2s_adapter;
+
+	uint32_t temp_reg = 0;
+
+	temp_reg |= pi2s_adapter->base_addr->ctrl_b.tx_act;
+
+	return temp_reg;
 }
 
 void i2s_set_param(i2s_t *obj, int channel_num, int rate, int word_len)
@@ -187,25 +211,26 @@ void i2s_deinit(i2s_t *obj)
 #else
 	uint32_t I2S_S1[5] = {PD_14, PD_17, PD_15, PD_18, PD_16};
 #endif
+	if (obj->i2s_initialized) {
+		hal_i2s_deinit(pi2s_adapter);
 
-	hal_i2s_deinit(pi2s_adapter);
+		if (pi2s_adapter->dev_num == I2s0_Sel) {
+			hal_pinmux_unregister(PF_11, PID_I2S0);
+			hal_pinmux_unregister(PF_12, PID_I2S0);
+			hal_pinmux_unregister(PF_13, PID_I2S0);
+			hal_pinmux_unregister(PF_14, PID_I2S0);
+			hal_pinmux_unregister(PF_15, PID_I2S0);
+		}
 
-	if (pi2s_adapter->dev_num == I2s0_Sel) {
-		hal_pinmux_unregister(PF_11, PID_I2S0);
-		hal_pinmux_unregister(PF_12, PID_I2S0);
-		hal_pinmux_unregister(PF_13, PID_I2S0);
-		hal_pinmux_unregister(PF_14, PID_I2S0);
-		hal_pinmux_unregister(PF_15, PID_I2S0);
+		if (pi2s_adapter->dev_num == I2s1_Sel) {
+			hal_pinmux_unregister(I2S_S1[0], PID_I2S1);
+			hal_pinmux_unregister(I2S_S1[1], PID_I2S1);
+			hal_pinmux_unregister(I2S_S1[2], PID_I2S1);
+			hal_pinmux_unregister(I2S_S1[3], PID_I2S1);
+			hal_pinmux_unregister(I2S_S1[4], PID_I2S1);
+		}
+		obj->i2s_initialized = 0;
 	}
-
-	if (pi2s_adapter->dev_num == I2s1_Sel) {
-		hal_pinmux_unregister(I2S_S1[0], PID_I2S1);
-		hal_pinmux_unregister(I2S_S1[1], PID_I2S1);
-		hal_pinmux_unregister(I2S_S1[2], PID_I2S1);
-		hal_pinmux_unregister(I2S_S1[3], PID_I2S1);
-		hal_pinmux_unregister(I2S_S1[4], PID_I2S1);
-	}
-
 }
 
 int *i2s_get_tx_page(i2s_t *obj)
@@ -313,6 +338,11 @@ void i2s_set_loopback(i2s_t *obj, BOOL loopback_en)
 	hal_i2s_adapter_t *pi2s_adapter = &obj->i2s_adapter;
 
 	hal_i2s_set_loopback(pi2s_adapter, loopback_en);
+	if (loopback_en == 1) {
+		hal_i2s_set_direction(pi2s_adapter, (uint8_t)I2S_DIR_TX);
+	} else if (i2s_get_direction(obj) == I2S_DIR_TX) {
+		hal_i2s_set_direction(pi2s_adapter, (uint8_t)I2S_DIR_TXRX);
+	}
 }
 
 void i2s_set_data_start_edge(i2s_t *obj, i2s_edge_sw edge_sw)
@@ -328,5 +358,3 @@ void i2s_set_mute(i2s_t *obj, BOOL mute_en)
 
 	hal_i2s_set_mute(pi2s_adapter, mute_en);
 }
-
-

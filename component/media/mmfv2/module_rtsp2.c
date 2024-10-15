@@ -390,6 +390,7 @@ void *rtsp2_destroy(void *p)
 		for (int i = 0; i < ctx->rtsp->nb_streams; i++) {
 			if (ctx->rtsp->stream_ctx[i].codec) {
 				free(ctx->rtsp->stream_ctx[i].codec);
+				ctx->rtsp->stream_ctx[i].codec = NULL;
 			}
 
 			rtp_object_deinit(&ctx->rtsp->stream_ctx[i].rtpobj.payload);
@@ -400,6 +401,7 @@ void *rtsp2_destroy(void *p)
 	}
 	if (ctx)	{
 		free(ctx);
+		ctx = NULL;
 	}
 
 	return NULL;

@@ -108,12 +108,13 @@ void SleepCG(u16 Option, u32 SDuration, u8 Clock, u8 SramOption)
  *                - 0: shutdown mode.
  *                - 1: retention mode.
  *                - 2: Normal mode.
- *  @returns void
+ *  @returns
+ *                - wake reason.
  */
-void Standby(u16 Option, u32 SDuration, u8 Clock, u8 SramOption)
+u32 Standby(u16 Option, u32 SDuration, u8 Clock, u8 SramOption)
 {
 	//hal_gpio_pull_ctrl(PA_1, Pin_PullDown);
-	hal_SleepPG(Option, SDuration, Clock, SramOption);
+	return hal_SleepPG(Option, SDuration, Clock, SramOption);
 }
 
 /**
@@ -128,7 +129,7 @@ void Standby(u16 Option, u32 SDuration, u8 Clock, u8 SramOption)
  *                - bit[7]: the COMP Wake up status.
  *                - bit[6]: the AON TIMER Wake up status.
  *                - bit[5]: the UART Wake up status.
- *                - bit[4]: NA.
+ *                - bit[4]: the WLAN RX status.
  *                - bit[3]: the WLAN Wake up status.
  *                - bit[2]: NA.
  *                - bit[1]: the PON GPIO Wake up status.

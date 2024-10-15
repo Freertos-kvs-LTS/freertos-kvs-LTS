@@ -54,6 +54,8 @@ static int detach_mode = 0; //0 USB Detach 1 Ethenet Detach
 static int lwip_dhcp_retry_count = ECM_DCHP_RETRY_COUNT;
 static int lwip_dhcp_status = -1;
 u8 multi_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+static bool ecm_flg = false;
+static int lwip_static_ip_status = -1;
 
 //#define ECM_MONITOR_MODE //If the usb is detach that it will initial the ecm to get the attach
 
@@ -82,6 +84,25 @@ int ecm_lwip_dhcp_status(void)
 	return lwip_dhcp_status;
 }
 
+int ecm_lwip_static_ip_status(void)
+{
+	return lwip_static_ip_status;
+}
+
+int ecm_lwip_check_ip(char *ip)
+{
+	int ret = 0;
+	struct eth_addr *dhcp_dst_eth_ret = NULL;
+	ip4_addr_t *dhcp_dst_ip_ret = NULL;
+	ip4_addr_t target_ip;
+	ip4addr_aton(ip, &target_ip);
+	LwIP_etharp_request(2, &target_ip);
+	vTaskDelay(10);
+	ret = LwIP_etharp_find_addr(2, &target_ip, &dhcp_dst_eth_ret, (const ip4_addr_t **)&dhcp_dst_ip_ret);
+	printf("ecm_lwip_check_ip ret %d\r\n", ret);
+	return ret;
+}
+
 void ecm_setup_static_ip_param(ecm_static_ip_info *attr)
 {
 	int ret = 0;
@@ -106,15 +127,28 @@ void ecm_setup_static_ip_param(ecm_static_ip_info *attr)
 int ecm_lwip_static_ip(int idx)
 {
 	int ret = 0;
-	LwIP_SetIP(idx, static_ip_attr.ip_addr, static_ip_attr.netmask, static_ip_attr.gw);
-	for (int i = 0; i < static_ip_attr.dns_num; i++) {
-		if (i == 0) {
-			dns_setserver(i, &static_ip_attr.dnsserver1);
-		} else if (i == 1) {
-			dns_setserver(i, &static_ip_attr.dnsserver2);
+	struct in_addr ip_addr;
+	ip_addr.s_addr = PP_HTONL(static_ip_attr.ip_addr);
+	char *ip = inet_ntoa(ip_addr);
+	printf("ip_addr %s\r\n", ip);
+	ret = ecm_lwip_check_ip(ip);
+	if (ret < 0) {
+		LwIP_SetIP(idx, static_ip_attr.ip_addr, static_ip_attr.netmask, static_ip_attr.gw);
+		for (int i = 0; i < static_ip_attr.dns_num; i++) {
+			if (i == 0) {
+				dns_setserver(i, &static_ip_attr.dnsserver1);
+			} else if (i == 1) {
+				dns_setserver(i, &static_ip_attr.dnsserver2);
+			}
 		}
+		printf("Static ip setup finish\r\n");
+		lwip_static_ip_status = 1;
+		ret = 0;
+	} else {
+		printf("Duplicate ip conflict\r\n");
+		lwip_static_ip_status = -1;
+		ret = -1;
 	}
-	printf("Static ip setup finish\r\n");
 	return ret;
 }
 
@@ -132,13 +166,18 @@ int ecm_lwip_dhcp(int idx)
 	int dhcp_status = 0;
 	int ret = 0;
 	for (int i = 0; i < lwip_dhcp_retry_count; i++) {
+		lwip_dhcp_status = DHCP_START;
 		dhcp_status = LwIP_DHCP(idx, DHCP_START);
 		if (DHCP_ADDRESS_ASSIGNED == dhcp_status) {
 			printf("DHCP Successful\r\n");
+			ret = 0;
 			break;
 		} else {
 			printf("It can't get the DHCP\r\n");
 			ret = -1;
+			if (lwip_status == 0) {
+				break;
+			}
 		}
 	}
 	lwip_dhcp_status = dhcp_status;
@@ -149,8 +188,11 @@ int ecm_lwip_switch_connect_mode(void)
 {
 	int ret = 0;
 	if (usbh_cdc_ecm_get_connect_status()) {
-		dhcp_stop(&xnetif[ETHERNET_IDX]);
+		lwip_status = 0;
+		//dhcp_stop(&xnetif[ETHERNET_IDX]);
+		LwIP_DHCP_stop(ETHERNET_IDX);
 		ecm_lwip_deinit();
+		lwip_status = 1;
 		ecm_lwip_init();
 		if (lwip_connect_mode == ECM_LWIP_DHCP_MODE) {
 			if (DHCP_ADDRESS_ASSIGNED != lwip_dhcp_status) {
@@ -225,6 +267,7 @@ void ecm_lwip_deinit(void)//disconnect to lwip
 {
 	netif_set_default(&xnetif[0]);
 	LwIP_ReleaseIP(ETHERNET_IDX);
+	lwip_dhcp_status = DHCP_STOP;
 	if (netif_is_link_up(&xnetif[ETHERNET_IDX])) {
 		printf("Lwip link down\r\n");
 		netif_set_link_down(&xnetif[ETHERNET_IDX]);
@@ -247,40 +290,47 @@ void usb_cdc_ecm_disconnect_cb(void)
 bool ecm_on(void)
 {
 	bool status = false;
-	usbh_cdc_ecm_user_cb_t usb_cb;
-	memset(&usb_cb, 0x00, sizeof(usb_cb));
-	rx_buffer_saved_data = 0;
-	ip_total_len = 0;
-	usb_cb.report_data = usb_ethernet_ecm_cb;//Recevie the packet
-	usb_cb.usb_attach = usb_cdc_ecm_attach_cb;//Attach the ECM
-	usb_cb.usb_detach = usb_cdc_ecm_detach_cb;//Detach the ECM
-	usb_cb.usb_connect = usb_cdc_ecm_connect_cb;
-	usb_cb.usb_disconnect = usb_cdc_ecm_disconnect_cb;
-	status = usbh_cdc_ecm_on(&usb_cb);
-	if (status == true) {
-		printf("ecm init ok\r\n");
-	} else {
-		printf("ecm init fail\r\n");
+	if (ecm_flg == false) {
+		usbh_cdc_ecm_user_cb_t usb_cb;
+		memset(&usb_cb, 0x00, sizeof(usb_cb));
+		rx_buffer_saved_data = 0;
+		ip_total_len = 0;
+		usb_cb.report_data = usb_ethernet_ecm_cb;//Recevie the packet
+		usb_cb.usb_attach = usb_cdc_ecm_attach_cb;//Attach the ECM
+		usb_cb.usb_detach = usb_cdc_ecm_detach_cb;//Detach the ECM
+		usb_cb.usb_connect = usb_cdc_ecm_connect_cb;
+		usb_cb.usb_disconnect = usb_cdc_ecm_disconnect_cb;
+		status = usbh_cdc_ecm_on(&usb_cb);
+		if (status == true) {
+			printf("ecm init ok\r\n");
+		} else {
+			printf("ecm init fail\r\n");
+		}
+		ecm_flg = true;
 	}
+
 	return status;
 }
 
 bool ecm_off(void)
 {
 	bool status = false;
-	status = usbh_cdc_ecm_off();
-	if (status == true) {
-		printf("ecm deinit ok\r\n");
-	} else {
-		printf("ecm deinit fail\r\n");
+	if (ecm_flg == true) {
+		status = usbh_cdc_ecm_off();
+		if (status == true) {
+			printf("ecm deinit ok\r\n");
+			ecm_flg = false;
+		} else {
+			printf("ecm deinit fail\r\n");
+		}
 	}
+
 	return status;
 }
 
 void ecm_deinit_resoure(void)
 {
-	rtw_mutex_free(&mii_tx_mutex);
-	rtw_mutex_free(&mii_link_mutex);
+
 	rtw_free_sema(&ecm_attach_sema);
 	rtw_free_sema(&ecm_detach_sema);
 	rtw_delete_task(&task_ecm_attach);
@@ -294,6 +344,8 @@ static void ecm_detach_thread(void *parm)
 		rtw_down_sema(&ecm_detach_sema);
 		if (lwip_status) {
 			lwip_status = 0;
+			//dhcp_stop(&xnetif[ETHERNET_IDX]);
+			LwIP_DHCP_stop(ETHERNET_IDX);
 			ecm_lwip_deinit();
 			printf("link to unlink !!\n");
 		} else {
@@ -308,7 +360,9 @@ static void ecm_detach_thread(void *parm)
 			break;
 		}
 	}
-	rtw_thread_exit();
+	rtw_delete_task(&task_ecm_detach);
+
+
 }
 
 static void ecm_attach_thread(void *parm)
@@ -323,7 +377,8 @@ static void ecm_attach_thread(void *parm)
 			printf("lwip_status %d !!\n", lwip_status);
 		}
 	}
-	rtw_thread_exit();
+
+	rtw_delete_task(&task_ecm_attach);
 }
 
 //should parse the data to get the ip header
@@ -437,7 +492,7 @@ void rltk_mii_recv(struct eth_drv_sg *sg_list, int sg_len)
 
 s8 rltk_mii_send(struct eth_drv_sg *sg_list, int sg_len, int total_len)
 {
-	rtw_mutex_get(&mii_tx_mutex);
+
 	int ret = 0;
 	struct eth_drv_sg *last_sg;
 	usb_send_packet *tx_packet = usbh_ecm_send_get_buf();
@@ -454,7 +509,7 @@ s8 rltk_mii_send(struct eth_drv_sg *sg_list, int sg_len, int total_len)
 	} else {
 		ret = -1;
 	}
-	rtw_mutex_put(&mii_tx_mutex);
+
 	return ret;
 }
 
@@ -465,8 +520,7 @@ void usbh_ecm_thread(void *param)
 	bool status = false;
 	lwip_status = 0;
 	lwip_dhcp_status = -1;
-	rtw_mutex_init(&mii_tx_mutex);
-	rtw_mutex_init(&mii_link_mutex);
+	lwip_static_ip_status = -1;
 	rtw_init_sema(&ecm_attach_sema, 0);
 	rtw_init_sema(&ecm_detach_sema, 0);
 #ifdef ECM_STATIC_IP_TEST
@@ -516,8 +570,6 @@ void usbh_ecm_thread(void *param)
 EXIT_FAIL_DETACH:
 	rtw_delete_task(&task_ecm_attach);
 EXIT_FAIL_ATTACH:
-	rtw_mutex_free(&mii_tx_mutex);
-	rtw_mutex_free(&mii_link_mutex);
 	rtw_free_sema(&ecm_attach_sema);
 	rtw_free_sema(&ecm_detach_sema);
 EXIT:
@@ -553,6 +605,7 @@ void ethernet_usb_init(void)
 
 void ethernet_usb_deinit(void)
 {
+	detach_mode = ECM_USB_CABLE_DETACH;
 	rtw_up_sema(&ecm_detach_sema);//Trigger to close the ecm driver
 	int count = 0;
 	ecm_status = ECM_STATUS_DEINIT;

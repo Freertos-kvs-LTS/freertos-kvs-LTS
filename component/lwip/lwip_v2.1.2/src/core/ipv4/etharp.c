@@ -1302,6 +1302,32 @@ int arp_resume(void)
   return 0;
 }
 
+int arp_resume_router_gw(void){
+  u8_t ap_bssid[6] = {0xff,0xff,0xff,0xff,0xff,0xff};
+  extern struct netif xnetif[NET_IF_NUM];
+  extern ip4_addr_t dhcp_get_retention_gwip(void);
+  ip4_addr_t gwipaddr = dhcp_get_retention_gwip();
+  
+  if (rtw_wx_get_wap(0, ap_bssid) == 0) {
+	if(!ip4_addr_isany_val(gwipaddr)){
+	  arp_table[0].netif = &xnetif[0];
+	  arp_table[0].ipaddr = gwipaddr;
+	  arp_table[0].state = ETHARP_STATE_STABLE;
+	  struct eth_addr *ethaddr = &arp_table[0].ethaddr;  
+	  memcpy(ethaddr->addr, ap_bssid, 6);
+	  arp_table[0].q = NULL;
+	  arp_table[0].ctime = 0;
+	  //arp_table_dump();
+	  return 0;
+	}
+  }
+
+  printf("[%s] resume arp router("MAC_FMT") gateway ip(%s) failure.\n\r"
+		 ,__FUNCTION__,MAC_ARG(ap_bssid), ip4addr_ntoa( &gwipaddr ));
+
+  return -1;
+}
+
 uint8_t lwip_check_arp_resume(void)
 {
   if (retention_have_new_arp == 1) {

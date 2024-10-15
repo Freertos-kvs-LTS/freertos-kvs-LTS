@@ -228,6 +228,34 @@ static err_t low_level_output_mii(struct netif *netif, struct pbuf *p)
  */
 //void ethernetif_input( void * pvParameters )
 
+#define ETHERNETIF_BLOCKED_MAX_NUM  10
+static struct pbuf *ethernetif_blocked_pbuf[ETHERNETIF_BLOCKED_MAX_NUM] = {0};
+static uint32_t ethernetif_blocked_num = 0;
+static uint8_t ethernetif_blocked = 0;
+extern struct netif xnetif[];
+
+void ethernetif_set_blocked(uint8_t blocked)
+{
+    ethernetif_blocked = blocked;
+}
+
+void ethernetif_fill_blocked_packet(void)
+{
+    ethernetif_blocked = 0;
+
+    for (int i = 0; i < ETHERNETIF_BLOCKED_MAX_NUM; i ++) {
+        if (ethernetif_blocked_pbuf[i] != NULL) {
+            struct pbuf *p = ethernetif_blocked_pbuf[i];
+            struct netif *netif = &xnetif[0];
+            if (ERR_OK != netif->input(p, netif)) {
+                pbuf_free(p);
+            }
+            ethernetif_blocked_pbuf[i] = NULL;
+        }
+    }
+
+    ethernetif_blocked_num = 0;
+}
 
 /* Refer to eCos eth_drv_recv to do similarly in ethernetif_input */
 void ethernetif_recv(struct netif *netif, int total_len)
@@ -276,6 +304,18 @@ void ethernetif_recv(struct netif *netif, int total_len)
 #elif CONFIG_INIC_HOST
     rltk_inic_recv(sg_list, sg_len);
 #endif
+
+    // block TCP/UDP packets
+    if (ethernetif_blocked && (netif == &xnetif[0]) && (p->len > (14 + 20)) && ((((uint8_t *) p->payload)[23] == 0x06) || (((uint8_t *) p->payload)[23] == 0x11))) {
+        if (ethernetif_blocked_num < ETHERNETIF_BLOCKED_MAX_NUM) {
+            ethernetif_blocked_pbuf[ethernetif_blocked_num] = p;
+            ethernetif_blocked_num ++;
+        } else {
+            pbuf_free(p);
+        }
+        return;
+    }
+
     // Pass received packet to the interface
     if (ERR_OK != netif->input(p, netif))
         pbuf_free(p);

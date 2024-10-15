@@ -3,7 +3,7 @@
 * Copyright(c) 2007 - 2018 Realtek Corporation. All rights reserved.
 *
 ******************************************************************************/
-
+#include "platform_opts.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include "rtl8735b.h"
@@ -744,22 +744,154 @@ void vipnn_free_videomemory(void *ptr)
 	}
 }
 
+/* signed/encrypted model bin = | model bin | IV[16] | sha256 hash[32] | ed25519 signature[64] |
+ * encrypted only model bin = | model bin | IV[16] | */
+#include "hal_crypto.h"
+#include "hal_eddsa.h"
+
+int vipnn_hash_check(unsigned char *hash, unsigned char *model, uint32_t model_len)
+{
+	/* SHA256 HASH check */
+	uint8_t sha256_hash[32];
+	uint32_t sha_length_done = 0;
+	device_mutex_lock(RT_DEV_LOCK_CRYPTO);
+	hal_crypto_sha2_256_init();
+	while ((model_len - sha_length_done) > CRYPTO_MAX_MSG_LENGTH) {
+		hal_crypto_sha2_256_update(model + sha_length_done, CRYPTO_MAX_MSG_LENGTH);
+		sha_length_done += CRYPTO_MAX_MSG_LENGTH;
+	}
+	hal_crypto_sha2_256_update(model + sha_length_done, model_len - sha_length_done);
+	hal_crypto_sha2_256_final(sha256_hash);
+	device_mutex_unlock(RT_DEV_LOCK_CRYPTO);
+	CHK_MSG(memcmp(sha256_hash, hash, sizeof(sha256_hash)) == 0, error, "error: mdoel hash check fail.\r\n");
+	printf("[NN hash] check pass\r\n");
+
+	return 0;
+
+error:
+	return -1;
+}
+
+int vipnn_signature_check(unsigned char *signature, unsigned char *msg, unsigned char *pubkey, uint32_t msg_len)
+{
+	int ret = 0;
+	/* EDDSA ED25519 signature check */
+	device_mutex_lock(RT_DEV_LOCK_CRYPTO);
+	ret = hal_eddsa_engine_init(EDDSA_HASH_CRYPTO_HW_SEL_EN);
+	device_mutex_unlock(RT_DEV_LOCK_CRYPTO);
+	CHK_MSG(ret == SUCCESS, error, "error: hal_eddsa_engine_init fail.\r\n");
+	device_mutex_lock(RT_DEV_LOCK_CRYPTO);
+	ret = hal_eddsa_sign_verify(signature, msg, pubkey, msg_len, EDDSA_FLOW_AUTOFLOW, ENABLE);
+	device_mutex_unlock(RT_DEV_LOCK_CRYPTO);
+	CHK_MSG(ret == SUCCESS, error, "error: hal_eddsa_sign_verify fail.\r\n");
+	printf("[NN signature] check pass\r\n");
+	return 0;
+
+error:
+	return -1;
+}
+
+/* Use FW private key to sign model by default, so we need FW public key to validate the signature */
+int vipnn_get_fw_manifest_pubkey(unsigned char pubkey[32])
+{
+	void *partition_fp = NULL;
+	const char *partition_name = NULL;
+	int cur_fw_idx = hal_sys_get_ld_fw_idx();
+	if (cur_fw_idx == 1) {
+		partition_name = "FW1";
+	} else if (cur_fw_idx == 2) {
+		partition_name = "FW2";
+	}
+	CHK_MSG(partition_name != NULL, error, "error: current fw index is wrong\r\n");
+
+	partition_fp = pfw_open(partition_name, M_RAW | M_RDONLY);
+	CHK_MSG(partition_fp != NULL, error, "error: pfw_open fail.\r\n");
+	pfw_seek(partition_fp, 0x124, SEEK_SET);  //seek to public key offset in fw manifest
+	CHK_MSG(pfw_read(partition_fp, pubkey, 32) >= 0, error, "error: read public key fail.\r\n");
+	pfw_close(partition_fp);
+	return 0;
+
+error:
+	if (partition_fp) {
+		pfw_close(partition_fp);
+	}
+	return -1;
+}
+
+#include "efuse_api.h"
+/* Use OTP user key to encrypt model by default, so we need to load this key */
+int vipnn_get_otp_seckey(unsigned char seckey[32])
+{
+	int ret = 0;
+	/* read user OTP key from efuse */
+	device_mutex_lock(RT_DEV_LOCK_EFUSE);
+	ret = efuse_crypto_key_get(seckey, 0);
+	device_mutex_unlock(RT_DEV_LOCK_EFUSE);
+	CHK_MSG(ret == 0, error, "ERROR: efuse_crypto_key_get fail\r\n");
+	return 0;
+
+error:
+	return -1;
+}
+
+typedef struct mdlsig_info_s {
+	unsigned char sha256[32];
+	unsigned char signature[64];
+} mdlsig_info_t;
+
+/* read model by nn file abstraction layer */
 int vipnn_load_model(nnmodel_t *model, int *size)
 {
 	void *fd = nn_f_open(model->nb(), M_NORMAL);
 	CHK_MSG(fd != NULL, error, "error: nn_f_open fail.\r\n");
 	nn_f_seek(fd, 0, SEEK_END);
-	*size = nn_f_tell(fd);
-	CHK_MSG(*size > 0, error, "error: wrong model size.\r\n");
+	int model_size = nn_f_tell(fd);
+	CHK_MSG(model_size > 0, error, "error: wrong model size.\r\n");
 	nn_f_seek(fd, 0, SEEK_SET);
-	model->model_content = vipnn_allocate_videomemory(*size);
+	model->model_content = vipnn_allocate_videomemory(model_size);
 	CHK_MSG(model->model_content != NULL, error, "error: vipnn_allocate_videomemory fail.\r\n");
-	CHK_MSG(nn_f_read(fd, model->model_content, *size) >= 0, error, "error: nn_f_read fail to read model.\r\n");
+	CHK_MSG(nn_f_read(fd, model->model_content, model_size) >= 0, error, "error: nn_f_read fail to read model.\r\n");
 	nn_f_close(fd);
-	dcache_clean_invalidate_by_addr((uint32_t *)model->model_content, *size);
+	dcache_clean_invalidate_by_addr((uint32_t *)model->model_content, model_size);
+
+	/* check signature and hash of signed model */
+#if CONFIG_NN_HASH_SIGNATURE_CHECK
+	/* signature check */
+	unsigned char pubkey[32];
+	CHK_MSG(vipnn_get_fw_manifest_pubkey(pubkey) == 0, error, "error: vipnn_get_fw_manifest_pubkey fail.\r\n");
+	mdlsig_info_t *signed_info = (mdlsig_info_t *)((uint8_t *)model->model_content + model_size - sizeof(mdlsig_info_t));
+	CHK_MSG(vipnn_signature_check(signed_info->signature, signed_info->sha256, pubkey, sizeof(signed_info->sha256)) == 0, error,
+			"error: vipnn_signature_check fail.\r\n");
+	/* hash check */
+	model_size -= sizeof(mdlsig_info_t);
+	CHK_MSG(vipnn_hash_check(signed_info->sha256, model->model_content, model_size) == 0, error, "error: vipnn_hash_check fail.\r\n");
+#endif
+
+	/* decrypt model by key in OTP */
+#if CONFIG_NN_AES_ENCRYPTION
+	unsigned char aes_cbc_seckey[32];
+	CHK_MSG(vipnn_get_otp_seckey(aes_cbc_seckey) == 0, error, "error: vipnn_get_otp_seckey fail\r\n");
+	model_size -= 16;  /* minus iv length */
+	uint8_t *iv = (uint8_t *)model->model_content + model_size;  /* iv appended after model */
+	extern int nn_aes_key_injection(uint8_t *key, uint8_t *iv);
+	CHK_MSG(nn_aes_key_injection(aes_cbc_seckey, iv) == 0, error, "error: nn_aes_key_injection fail\r\n");
+
+	fd = nn_f_open(model->nb(), M_NORMAL);  /* if model encrypted and key injected, model will be decrypted while opening */
+	CHK_MSG(fd != NULL, error, "error: nn_f_open fail.\r\n");
+	nn_f_seek(fd, 0, SEEK_SET);
+	const int enc_len = 512;
+	CHK_MSG(nn_f_read(fd, model->model_content, enc_len) >= 0, error, "error: nn_f_read fail to read model.\r\n");
+	nn_f_close(fd);  /* will reset injected key while closing */
+	dcache_clean_invalidate_by_addr((uint32_t *)model->model_content, enc_len);
+#endif
+
+	*size = model_size;
 	return 0;
 
 error:
+	if (fd) {
+		nn_f_close(fd);
+	}
 	return -1;
 }
 

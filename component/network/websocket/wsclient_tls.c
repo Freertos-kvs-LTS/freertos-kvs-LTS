@@ -52,6 +52,13 @@ static char *ws_itoa(int value)
 }
 #endif /* WSCLIENT_USE_TLS */
 
+uint8_t set_ciphersuites = 0;
+
+void wss_tls_set_wowlan_ciphersuites(uint8_t value)
+{
+	set_ciphersuites = value;
+}
+
 int ws_random(void *p_rng, unsigned char *output, size_t output_len);
 extern int mbedtls_platform_set_calloc_free(void *(*calloc_func)(size_t, size_t), void (*free_func)(void *));
 void *wss_tls_connect(int *sock, char *host, int port)
@@ -129,6 +136,12 @@ exit:
 											   MBEDTLS_SSL_PRESET_DEFAULT)) != 0) {
 			printf("\n[WSCLIENT] ERROR: ssl_config %d\n", ret);
 			goto exit;
+		}
+
+		//for wowlan
+		if (set_ciphersuites) {
+			static int ciphersuites[] = {MBEDTLS_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384, 0};
+			mbedtls_ssl_conf_ciphersuites(conf, ciphersuites);
 		}
 
 		mbedtls_ssl_conf_authmode(conf, MBEDTLS_SSL_VERIFY_NONE);

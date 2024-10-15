@@ -14,6 +14,12 @@ typedef	int32_t 	INT32;
 #define VQE_RCV_STATE_MEM_SIZE         (2100)       //32-bit words
 
 #define VQE_SCRATCH_MEM_SIZE           (1800)       //32-bit words
+
+#define ADAPTATION_ENABLE         (1)
+#define MIC_MUTE_ENABLE           (4)
+#define SPK_MUTE_ENABLE           (8)
+#define SIREN_TONE_RECEIVED       (16)
+
 typedef struct {
 	INT16 DoA;                      //in degrees
 	INT16 ERLE;                     //in dB
@@ -153,8 +159,10 @@ typedef struct {
 } VQE_BF_RTCTRL_PARAMS;
 
 
-INT32 VQE_SND_GetStateMemorySize(INT32 SamplingRate, INT16 ECEnable, INT16 ECTail, INT16 PPLevel, INT16 BuilkDelay, INT16 Mode, INT16 NSEnable, INT16 AGCEnable, INT16 EQEnable, INT16 HCEnable, INT16 MM, INT16 MicArrayType, INT16 BFEnable, INT16 DOAEnable, INT16 PTime);
-INT32 VQE_SND_GetScratchMemorySize(INT32 SamplingRate, INT16 ECEnable, INT16 ECTail, INT16 Mode, INT16 PTime, INT16 MM, INT16 BFEnable, INT16 DOAEnable, INT16 MicArrayType);
+INT32 VQE_SND_GetStateMemorySize(INT32 SamplingRate, INT16 ECEnable, INT16 ECTail, INT16 PPLevel, INT16 BuilkDelay, INT16 Mode, INT16 NSEnable, INT16 AGCEnable,
+								 INT16 EQEnable, INT16 HCEnable, INT16 MM, INT16 MicArrayType, INT16 BFEnable, INT16 DOAEnable, INT16 PTime);
+INT32 VQE_SND_GetScratchMemorySize(INT32 SamplingRate, INT16 ECEnable, INT16 ECTail, INT16 Mode, INT16 PTime, INT16 MM, INT16 BFEnable, INT16 DOAEnable,
+								   INT16 MicArrayType);
 
 INT16 VQE_SND_Init(INT32 *VQESndMem, VQE_AEC_CTRL_PARAMS *AECCfg, VQE_NS_CTRL_PARAMS *NSCfg, VQE_AGC_CTRL_PARAMS *AGCCfg, void *EQCfg, void *HCCfg,
 				   VQE_BF_CTRL_PARAMS *BFCfg, INT32 *WorkBuffer, INT16 FrameSize);

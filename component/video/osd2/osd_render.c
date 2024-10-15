@@ -187,9 +187,9 @@ void osd_render_task(void *arg)
 
 					int width = canvas_get_bitmap_width(&obj->bitmap[bimap_index]);
 					int height = canvas_get_bitmap_height(&obj->bitmap[bimap_index]);
-					if (obj->bitmap[bimap_index].bmp_format == RTS_OSD2_BLK_FMT_RGBA2222) {
+					if(obj->bitmap[bimap_index].bmp_format == RTS_OSD2_BLK_FMT_RGBA2222) {
 						obj->bitmap[bimap_index].buff_len = width * height;
-					} else if (obj->bitmap[bimap_index].bmp_format == RTS_OSD2_BLK_FMT_1BPP) {
+					} else if(obj->bitmap[bimap_index].bmp_format == RTS_OSD2_BLK_FMT_1BPP) {
 						obj->bitmap[bimap_index].buff_len = width / 8 * height;
 					} else {
 						printf("CANVAS_MSG_DRAW failed: invalid bitmap format. default set to 1bpp.\r\n");
@@ -206,14 +206,14 @@ void osd_render_task(void *arg)
 						obj->bitmap[bimap_index].buff_len = 64;
 						obj->canvas_draw_msg_count = 0;
 					}
-
-					if (obj->canvas_draw_msg_count == 0 && cavas_msg_recieve.draw_data.ready2update == 0) {
+					
+					if(obj->canvas_draw_msg_count == 0 && cavas_msg_recieve.draw_data.ready2update == 0) {
 						//if ready2ypdate == 1, it should update other osd block in same channel.
-						if (osd_update_hide_custom(NULL, osd2_pic) == RT_OK) {
+						if(osd_update_hide_custom(NULL, osd2_pic) == RT_OK) {
 							continue;
 						}
 					}
-
+					
 					//malloc bitmap
 					if (obj->bitmap[bimap_index].buff) {
 						free(obj->bitmap[bimap_index].buff);
@@ -255,7 +255,7 @@ void osd_render_task(void *arg)
 						osd2_pic->osd2.buf = *buff_bmp;
 						osd2_pic->osd2.len = obj->bitmap[bimap_index].buff_len;
 
-						if (osd_update_custom(NULL, osd2_pic, cavas_msg_recieve.draw_data.ready2update, 0, osd2_pic->chn_id) == RT_OK) {
+						if(osd_update_custom(NULL, osd2_pic, cavas_msg_recieve.draw_data.ready2update, 0, osd2_pic->chn_id) == RT_OK) {
 							obj->buff_used_index = obj->buff_used_index ^ 0x01;
 						} else {
 							printf("osd_update_custom failed\r\n");

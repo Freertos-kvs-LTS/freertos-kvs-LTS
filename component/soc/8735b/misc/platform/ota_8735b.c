@@ -1397,7 +1397,11 @@ int parse_http_response(uint8_t *response, uint32_t response_len, http_response_
 						--j2;
 					}
 					uint8_t len_buf[12] = {0};
-					memcpy(len_buf, response + j1, j2 - j1 + 1);
+					if ((j2 - j1 + 1) <= sizeof(len_buf)) {
+						memcpy(len_buf, response + j1, j2 - j1 + 1);
+					} else {
+						return -1;
+					}
 					result->body_len = atoi((char const *)len_buf);
 					result->parse_status = 2;
 				}

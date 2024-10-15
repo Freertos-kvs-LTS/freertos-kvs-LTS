@@ -2755,6 +2755,11 @@ void tcp_reg_active(struct tcp_pcb *pcb)
   TCP_REG_ACTIVE(pcb);
 }
 
+void tcp_rmv_bound(struct tcp_pcb *pcb)
+{
+  TCP_RMV(&tcp_bound_pcbs, pcb);
+}
+
 uint16_t tcp_get_last_port(void)
 {
   return tcp_port;

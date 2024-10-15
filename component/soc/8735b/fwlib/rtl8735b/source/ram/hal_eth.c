@@ -45,6 +45,11 @@ extern volatile hal_eth_tx_desc_t *peth_tx_desc;
 extern volatile hal_eth_rx_desc_t *peth_rx_desc;
 extern volatile u8 *peth_tx_pkt_buf;
 extern volatile u8 *peth_rx_pkt_buf;
+volatile u32 tx_ok_int_cnt = 0;
+volatile u32 rx_ok_int_cnt = 0;
+volatile u32 tdu_cnt = 0;
+volatile u32 rdu_cnt = 0;
+
 
 /**
   * @brief The global Ethernet HAL adapter.
@@ -208,42 +213,84 @@ void MII_IRQHandler(void)
 	ethernet_isr_imr_t isr_imr;
 
 
-	hal_irq_clear_pending(MII_IRQn);
-
 	isr_imr.w = peth_adapt->base_addr->isr_imr;
-	if ((isr_imr.b.isr_rok) && ((peth_adapt->int_mask) & BIT16)) {
-		peth_adapt->int_mask &= (~BIT16);
-//        DBG_MII_INFO("(R)\r\n");
+
+	// Rx OK
+	if (isr_imr.b.isr_rok) {
+		peth_adapt->base_addr->isr_imr |= FEMAC_ISR_BIT_ROK;
+		rx_ok_int_cnt++;
 		if ((peth_adapt->callback) != NULL) {
-			peth_adapt->callback(EthRxDone, 0);
+			peth_adapt->callback(EthIntRok, 0);
 		}
 	}
-
-	if ((isr_imr.b.isr_rer_ovf) && ((peth_adapt->int_mask) & BIT20)) {
-		peth_adapt->int_mask &= (~BIT4);
-//        DBG_MII_INFO("Rx FIFO overflow\r\n");
+	// Rx FIFO full
+	if (isr_imr.b.isr_rer_ovf) {
+		peth_adapt->base_addr->isr_imr |= FEMAC_ISR_BIT_RER_OVF;
+		DBG_MII_WARN("Rx FIFO full\r\n");
 	}
-
-	if ((isr_imr.b.isr_tok) && ((peth_adapt->int_mask) & BIT22)) {
-//        DBG_MII_INFO("(T)\r\n");
-		peth_adapt->int_mask &= (~BIT22);
+	// Tx OK
+	if (isr_imr.b.isr_tok) {
+		tx_ok_int_cnt++;
+//        peth_adapt->base_addr->isr_imr |= FEMAC_ISR_BIT_TOK;
 		if ((peth_adapt->callback) != NULL) {
-			peth_adapt->callback(EthTxDone, 0);
+			peth_adapt->callback(EthIntTok, 0);
 		}
 	}
-
-	if ((isr_imr.b.isr_linkchg) && ((peth_adapt->int_mask) & BIT24)) {
+	// TDU
+	if (isr_imr.b.isr_tdu) {
+		peth_adapt->base_addr->isr_imr |= FEMAC_ISR_BIT_TDU;
+		tdu_cnt++;
+	}
+	// Link change
+	if (isr_imr.b.isr_linkchg) {
+		peth_adapt->base_addr->isr_imr |= FEMAC_ISR_BIT_LINKCHG;
 		if ((peth_adapt->callback) != NULL) {
 			if (!(peth_adapt->base_addr->ms_b.linkb)) {
-				peth_adapt->callback(EthLinkUp, 0);
+				peth_adapt->callback(EthIntLinkUp, 0);
 			} else {
-				peth_adapt->callback(EthLinkDown, 0);
+				peth_adapt->callback(EthIntLinkDown, 0);
 			}
 		}
 	}
+	// RDU
+	if (isr_imr.b.isr_rdu) {
+		DBG_MII_WARN("RDU (0x%08X)\r\n", peth_adapt->base_addr->isr_imr);
+		tdu_cnt++;
+		if ((peth_adapt->callback) != NULL) {
+			peth_adapt->callback(EthIntRok, 0);
+		}
+		peth_adapt->base_addr->isr_imr |= FEMAC_ISR_BIT_RDU;
+	}
+	// CNT_WRAP
+	if (isr_imr.b.isr_cnt_wrap) {
+		peth_adapt->base_addr->isr_imr |= FEMAC_ISR_BIT_CNT_WRAP;
+	}
+	// RER_RUNT
+	if (isr_imr.b.isr_rer_runt) {
+		peth_adapt->base_addr->isr_imr |= FEMAC_ISR_BIT_RER_RUNT;
+		DBG_MII_INFO("Runt pkt\r\n");
+	}
+	// TER
+	if (isr_imr.b.isr_ter) {
+		peth_adapt->base_addr->isr_imr |= FEMAC_ISR_BIT_TER;
+		DBG_MII_WARN("TER (0x%08X)\r\n", peth_adapt->base_addr->isr_imr);
+	}
+	// others
+	if (((isr_imr.w) & BIT10) ||
+		((isr_imr.w) & BIT11) ||
+		((isr_imr.w) & BIT12) ||
+		((isr_imr.w) & BIT13) ||
+		((isr_imr.w) & BIT14) ||
+		((isr_imr.w) & BIT15)) {
+		DBG_MII_WARN("other ISR (%08X), %08X\r\n", isr_imr.w, peth_adapt->base_addr->isr_imr);
+		peth_adapt->base_addr->isr_imr = 0x3D70000
+										 | BIT10 | BIT11 | BIT12 | BIT13 | BIT14 | BIT15;
+	}
 
-	peth_adapt->base_addr->isr_imr = (peth_adapt->int_mask) | 0xFFFF;
+	hal_irq_clear_pending(MII_IRQn);
+
 	__DSB();
+	taskYIELD();
 }
 
 
@@ -363,7 +410,8 @@ hal_status_t hal_eth_init(void)
 	/* Rx settings */
 	peth->idr0 = ((peth_adapter->mac_id[0]) << 24) | ((peth_adapter->mac_id[1]) << 16) | ((peth_adapter->mac_id[2]) << 8) | (peth_adapter->mac_id[3]);
 	peth->idr4 = ((peth_adapter->mac_id[4]) << 24) | ((peth_adapter->mac_id[5]) << 16);
-	peth->rc = 0x3F;  // Accept error/runt/broadcast/multicast packets, etc.
+//    peth->rc = 0x3F;  // Accept error/runt/broadcast/multicast packets, etc.
+	peth->rc = 0xF;  // Accept broadcast/multicast packets, etc.
 	peth->com_b.rxjumbo = 1;  // Support jumbo packet
 	peth->etnrxcpu1 = 0x01010100;
 
@@ -379,10 +427,16 @@ hal_status_t hal_eth_init(void)
 	peth_tx_pkt_buf = peth_adapter->tx_pkt_buf;
 	peth_rx_pkt_buf = peth_adapter->rx_pkt_buf;
 
+	if (peth_adapter->dcache_invalidate_by_addr != NULL) {
+		peth_adapter->dcache_invalidate_by_addr((uint32_t *)peth_tx_desc, (int32_t)((peth_adapter->tx_desc_num) * sizeof(hal_eth_tx_desc_t)));
+		peth_adapter->dcache_invalidate_by_addr((uint32_t *)peth_rx_desc, (int32_t)((peth_adapter->rx_desc_num) * sizeof(hal_eth_rx_desc_t)));
+	}
 	/* initialize Tx descriptors */
 	for (i = 0; i < (peth_adapter->tx_desc_num); i++) {
 		if (i == ((peth_adapter->tx_desc_num) - 1)) {
 			peth_tx_desc[i].dw1 = BIT30;
+		} else {
+			peth_tx_desc[i].dw1 = 0;
 		}
 		peth_tx_desc[i].addr = (u32)(peth_tx_pkt_buf + (i * ETH_PKT_BUFF_SZ));
 		peth_tx_desc[i].dw2 = (eth_vlan_hdr_remove << 25) | (ETH_C_VLAN_HDR & 0xFFFF);
@@ -411,7 +465,10 @@ hal_status_t hal_eth_init(void)
 	peth->io_cmd_b.re = 1;
 
 	/* isr & imr */
-	peth_adapt->int_mask = BIT24 | BIT22 | BIT20 | BIT16 | 0xFFFF;
+	peth_adapt->int_mask = FEMAC_IMR_BIT_TDU | FEMAC_IMR_BIT_LINKCHG
+						   | FEMAC_IMR_BIT_TER | FEMAC_IMR_BIT_TOK | FEMAC_IMR_BIT_RER_OVF
+						   | FEMAC_IMR_BIT_RER_RUNT | FEMAC_IMR_BIT_CNT_WRAP | FEMAC_IMR_BIT_ROK
+						   | 0xFFFF;
 	peth->isr_imr = peth_adapt->int_mask;
 
 	/* enable auto-polling */

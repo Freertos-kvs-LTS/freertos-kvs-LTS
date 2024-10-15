@@ -17,8 +17,74 @@
 extern uint8_t __eram_end__[];
 extern uint8_t __eram_start__[];
 extern int __voe_code_start__[];
-int fcs_flag = 0;//for disable fcs flag
+static int fcs_flag = 0;//for disable fcs flag
 extern video_boot_stream_t video_boot_stream;
+static unsigned char video_boot_slot_num[5] = {2, 2, 2, 2, 2};
+
+_WEAK int video_boot_init_sensor_config(void)
+{
+	return -1;
+}
+
+_WEAK int user_load_sensor_boot(void)
+{
+	return 0;//default not to use
+}
+
+extern hal_status_t hal_voe_i2c_init_btldr(u8 idx);
+extern void hal_voe_set_kmfw_base_addr(u32 val);
+extern void hal_voe_set_kmfw_len(u32 val);
+int video_btldr_init_sensor_process(void)
+{
+	int ret = 0;
+	hal_i2c_adapter_t  i2c_master_btldr;
+	u8 i2c_idx = 0xff;
+	ret = user_load_sensor_boot();
+	if (ret <= 0) {
+		dbg_printf("It don't do the sensor initial process\r\n");
+		return -1;
+	} else {
+		//dbg_printf("Do the sensor initial process\r\n");
+	}
+
+	i2c_master_btldr.pltf_dat.scl_pin = PIN_D12;
+	i2c_master_btldr.pltf_dat.sda_pin = PIN_D10;
+	i2c_master_btldr.init_dat.index = 3;
+	//i2c_slave_addr = 0x30;
+	i2c_idx = 3;
+	//i2c_addr_len = 2;
+	//i2c_data_len = 1;
+
+	hal_i2c_pin_unregister_simple(&i2c_master_btldr);
+	hal_i2c_pin_register_simple(&i2c_master_btldr);
+	ret = hal_voe_i2c_init_btldr(i2c_idx);
+	if (ret != HAL_OK) {
+		dbg_printf("hal_voe_i2c_init_btldr fail: %x\n\r", ret);
+		hal_i2c_pin_unregister_simple(&i2c_master_btldr);
+		return -1;
+	} else {
+		//dbg_printf("hal_voe_i2c_init_btldr Success\n\r");
+	}
+	ret = video_boot_init_sensor_config();
+	if (ret != 0) {
+		dbg_printf("video_boot_init_sensor_config fail\r\n");
+		hal_i2c_pin_unregister_simple(&i2c_master_btldr);
+	} else {
+		//dbg_printf("video_boot_init_sensor_config ok\r\n");
+		hal_voe_set_kmfw_base_addr(FCS_RUN_DATA_OK_KM); //set fcs status OK
+		hal_voe_set_kmfw_len(0); //clear fcs error_code
+	}
+	return ret;
+}
+
+void video_boot_setup_slot_num(int stream_id, int slot_number)
+{
+	if ((stream_id >= 0 && stream_id <= 4) && (slot_number >= 2 && slot_number <= 3)) {
+		video_boot_slot_num[stream_id] = slot_number;
+	} else {
+		dbg_printf("The slot number don't support %d %d\r\n", stream_id, slot_number);
+	}
+}
 
 //Note that heap_4_2.c needs block header (size 0x20) for each block
 #define xHeapStructSize 0x20
@@ -125,7 +191,7 @@ int video_boot_buf_calc(video_boot_stream_t vidoe_boot)
 
 	for (i = 0; i < 3; i++) {
 		if (vidoe_boot.video_enable[i]) {
-			vidoe_boot.voe_heap_size += ((vidoe_boot.video_params[i].width * vidoe_boot.video_params[i].height * 3) / 2) * 2;//isp_ch_buf_num[0];
+			vidoe_boot.voe_heap_size += ((vidoe_boot.video_params[i].width * vidoe_boot.video_params[i].height * 3) / 2) * video_boot_slot_num[i];
 			//ISP common
 			vidoe_boot.voe_heap_size += ISP_CREATE_BUF;
 			//enc ref
@@ -158,7 +224,7 @@ int video_boot_buf_calc(video_boot_stream_t vidoe_boot)
 	}
 	if (vidoe_boot.video_enable[STREAM_V4]) { //For NN memory
 		//ISP buffer
-		vidoe_boot.voe_heap_size += vidoe_boot.video_params[i].width * vidoe_boot.video_params[STREAM_V4].height * 3 * 2;
+		vidoe_boot.voe_heap_size += vidoe_boot.video_params[i].width * vidoe_boot.video_params[STREAM_V4].height * 3 * video_boot_slot_num[STREAM_ID_V4];
 		//ISP common
 		vidoe_boot.voe_heap_size += ISP_CREATE_BUF;
 	}
@@ -171,7 +237,54 @@ int video_boot_buf_calc(video_boot_stream_t vidoe_boot)
 	return vidoe_boot.voe_heap_size;
 }
 
-int video_boot_open(video_boot_params_t *v_stream)
+void video_boot_calcu_meta_size(unsigned int *fcs_meta_size, unsigned int *fcs_meta_extend_size)
+{
+	int meta_size = 0;
+	int meta_loop = 0;
+	int enable_extend = 0;
+	if (video_boot_stream.extra_fcs_meta_enable_extend) {
+		meta_loop = 2;
+	} else {
+		meta_loop = 1;
+	}
+	for (int i = 0; i < meta_loop; i++) {
+		if (i == 1 && video_boot_stream.extra_fcs_meta_enable_extend) {
+			enable_extend = 1;//Insert the extend meta size
+		}
+		if (enable_extend) {
+			meta_size = video_boot_stream.meta_size + sizeof(isp_meta_t) + sizeof(isp_statis_meta_t) + sizeof(af_statis_t) + sizeof(ae_statis_t) + sizeof(awb_statis_t);
+		} else {
+			meta_size = video_boot_stream.meta_size + sizeof(isp_meta_t) + sizeof(isp_statis_meta_t);
+		}
+		meta_size = meta_size + meta_size / 2; //Add the extra buffer to dummy bytes
+		if (meta_size % 32) { //align 32 byte
+			meta_size = meta_size + (32 - (meta_size % 32));
+		}
+		if (enable_extend) {
+			video_boot_stream.extra_fcs_meta_extend_offset = meta_size / 0xff;
+			video_boot_stream.extra_fcs_meta_extend_total_size = meta_size;
+			if (video_boot_stream.extra_fcs_meta_extend_total_size > VIDEO_BOOT_META_REV_BUF) {
+				dbg_printf("Meta size %d is exceed the sei buffer %d\r\n", meta_size, VIDEO_BOOT_META_REV_BUF);
+				video_boot_stream.extra_fcs_meta_extend_total_size = VIDEO_BOOT_META_REV_BUF;
+				//v_adp->cmd[ch]->userData = VIDEO_BOOT_META_REV_BUF;
+				dbg_printf("Setup the meta size as %d\r\n", VIDEO_BOOT_META_REV_BUF);
+			}
+		} else {
+			video_boot_stream.fcs_meta_offset = meta_size / 0xff;
+			video_boot_stream.fcs_meta_total_size = meta_size;
+			if (video_boot_stream.fcs_meta_total_size > VIDEO_BOOT_META_REV_BUF) {
+				dbg_printf("Meta size %d is exceed the sei buffer %d\r\n", meta_size, VIDEO_BOOT_META_REV_BUF);
+				video_boot_stream.fcs_meta_total_size = VIDEO_BOOT_META_REV_BUF;
+				//v_adp->cmd[ch]->userData = VIDEO_BOOT_META_REV_BUF;
+				dbg_printf("Setup the meta size as %d\r\n", VIDEO_BOOT_META_REV_BUF);
+			}
+		}
+	}
+	*fcs_meta_size = video_boot_stream.fcs_meta_total_size;
+	*fcs_meta_extend_size = video_boot_stream.extra_fcs_meta_extend_total_size;
+}
+
+int video_boot_open(int ch_index, video_boot_params_t *v_stream)
 {
 	int ch = v_stream->stream_id;
 	int fcs_v = v_stream->fcs;
@@ -188,10 +301,10 @@ int video_boot_open(video_boot_params_t *v_stream)
 	int res = 0;
 	int codec = 0;
 
-	int enc_in_w = (video_boot_stream.video_params[ch].width + 15) & ~15;  //force 16 aligned
-	int enc_in_h = video_boot_stream.video_params[ch].height;
-	int enc_out_w = video_boot_stream.video_params[ch].width;  //will crop enc_in_w to enc_out_w
-	int enc_out_h = video_boot_stream.video_params[ch].height;
+	int enc_in_w = (video_boot_stream.video_params[ch_index].width + 15) & ~15;  //force 16 aligned
+	int enc_in_h = video_boot_stream.video_params[ch_index].height;
+	int enc_out_w = video_boot_stream.video_params[ch_index].width;  //will crop enc_in_w to enc_out_w
+	int enc_out_h = video_boot_stream.video_params[ch_index].height;
 	int enc_out_w_offset = (enc_in_w - enc_out_w) / 2;
 
 	int out_rsvd_size = (enc_in_w * enc_in_h) / VIDEO_RSVD_DIVISION;
@@ -209,22 +322,22 @@ int video_boot_open(video_boot_params_t *v_stream)
 		break;
 	}
 
-	bps = video_boot_stream.video_params[ch].bps;
+	bps = video_boot_stream.video_params[ch_index].bps;
 
-	if (video_boot_stream.video_params[ch].rc_mode) {
-		rcMode = video_boot_stream.video_params[ch].rc_mode - 1;
+	if (video_boot_stream.video_params[ch_index].rc_mode) {
+		rcMode = video_boot_stream.video_params[ch_index].rc_mode - 1;
 		if (rcMode) {
 			minQp = 25;
 			maxQp = 48;
-			bps = video_boot_stream.video_params[ch].bps / 2;
+			bps = video_boot_stream.video_params[ch_index].bps / 2;
 		}
 	}
 
-	if (video_boot_stream.video_params[ch].minQp > 0 && video_boot_stream.video_params[ch].minQp <= 51) {
-		minQp = video_boot_stream.video_params[ch].minQp;
+	if (video_boot_stream.video_params[ch_index].minQp > 0 && video_boot_stream.video_params[ch_index].minQp <= 51) {
+		minQp = video_boot_stream.video_params[ch_index].minQp;
 	}
-	if (video_boot_stream.video_params[ch].maxQp > 0 && video_boot_stream.video_params[ch].maxQp <= 51) {
-		maxQp = video_boot_stream.video_params[ch].maxQp;
+	if (video_boot_stream.video_params[ch_index].maxQp > 0 && video_boot_stream.video_params[ch_index].maxQp <= 51) {
+		maxQp = video_boot_stream.video_params[ch_index].maxQp;
 	}
 
 	hal_video_adapter_t *v_adp = hal_video_get_adp();
@@ -233,11 +346,7 @@ int video_boot_open(video_boot_params_t *v_stream)
 	v_adp->cmd[ch]->width = enc_out_w;
 	v_adp->cmd[ch]->height = enc_out_h;
 	v_adp->cmd[ch]->horOffsetSrc = enc_out_w_offset;
-
-	v_adp->cmd[ch]->outputRateNumer = video_boot_stream.video_params[ch].fps;
-	v_adp->cmd[ch]->inputRateNumer = isp_fps;//video_boot_stream.video_params[ch].fps;
-	v_adp->cmd[ch]->intraPicRate = video_boot_stream.video_params[ch].gop;
-	v_adp->cmd[ch]->rotation = video_boot_stream.video_params[ch].rotation;
+	v_adp->cmd[ch]->rotation = video_boot_stream.video_params[ch_index].rotation;
 	v_adp->cmd[ch]->bitPerSecond = bps;//video_boot_stream.video_params[ch].bps;
 	v_adp->cmd[ch]->qpMin = minQp;
 	v_adp->cmd[ch]->qpMax = maxQp;
@@ -258,6 +367,19 @@ int video_boot_open(video_boot_params_t *v_stream)
 		v_adp->cmd[ch]->tr_depth_inter   = 4;							// (.max_cu_size == 64) ? 4 : 3,
 		v_adp->cmd[ch]->level            = VCENC_HEVC_LEVEL_6;
 		v_adp->cmd[ch]->profile          = VCENC_HEVC_MAIN_PROFILE;	// default is HEVC MAIN profile
+		v_adp->cmd[ch]->outputRateNumer = v_stream->fps;
+		v_adp->cmd[ch]->inputRateNumer = isp_fps;
+		v_adp->cmd[ch]->intraPicRate = v_stream->gop;
+	} else if (v_stream->type == CODEC_NV12) {
+		v_adp->cmd[ch]->EncMode = 0;
+		v_adp->cmd[ch]->outputFormat     = VCENC_VIDEO_CODEC_NV12;
+		v_adp->cmd[ch]->YuvMode 		 = MODE_QUEUE;
+		v_adp->cmd[ch]->inputRateNumer = v_stream->fps;
+	} else if (v_stream->type == CODEC_RGB) {
+		v_adp->cmd[ch]->EncMode = 0;
+		v_adp->cmd[ch]->outputFormat     = VCENC_VIDEO_CODEC_RGB;
+		v_adp->cmd[ch]->YuvMode 		 = MODE_QUEUE;
+		v_adp->cmd[ch]->inputRateNumer = v_stream->fps;
 	} else {
 		v_adp->cmd[ch]->outputFormat     = VCENC_VIDEO_CODEC_H264;
 		v_adp->cmd[ch]->max_cu_size      = 16;
@@ -268,6 +390,9 @@ int video_boot_open(video_boot_params_t *v_stream)
 		v_adp->cmd[ch]->tr_depth_inter   = 2;
 		v_adp->cmd[ch]->level            = VCENC_H264_LEVEL_5_1;
 		v_adp->cmd[ch]->profile          = VCENC_H264_HIGH_PROFILE;	// default is HEVC HIGH profile
+		v_adp->cmd[ch]->outputRateNumer = v_stream->fps;
+		v_adp->cmd[ch]->inputRateNumer = isp_fps;
+		v_adp->cmd[ch]->intraPicRate = v_stream->gop;
 	}
 	v_adp->cmd[ch]->byteStream = VCENC_BYTE_STREAM;
 	v_adp->cmd[ch]->ch = v_stream->stream_id;
@@ -275,11 +400,12 @@ int video_boot_open(video_boot_params_t *v_stream)
 		v_adp->cmd[ch]->osd = 1;
 	}
 
-	if (video_boot_stream.video_snapshot[ch]) {
+	if (video_boot_stream.video_snapshot[ch_index]) {
 		v_adp->cmd[ch]->CodecType = v_stream->type | CODEC_JPEG;
 		v_adp->cmd[ch]->JpegMode = MODE_SNAPSHOT;
-		v_adp->cmd[ch]->jpg_buf_size = jpeg_out_buf_size;////hal_video_jpg_buf(ch, jpeg_out_buf_size, out_rsvd_size);
-		v_adp->cmd[ch]->jpg_rsvd_size = out_rsvd_size;
+		//Disable the ring buffer with JPEG SNAPSHOT. Setup the jpg_buf_size and jpg_rsvd_size as the same size
+		v_adp->cmd[ch]->jpg_buf_size = v_stream->width * v_stream->height * 3 / 2;
+		v_adp->cmd[ch]->jpg_rsvd_size = v_stream->width * v_stream->height * 3 / 2;
 		v_adp->cmd[ch]->qLevel = v_stream->jpeg_qlevel;
 	}
 
@@ -289,12 +415,12 @@ int video_boot_open(video_boot_params_t *v_stream)
 	}
 	v_adp->cmd[ch]->out_buf_size  = out_buf_size;
 	v_adp->cmd[ch]->out_rsvd_size = out_rsvd_size;
-	v_adp->cmd[ch]->isp_buf_num = 2;
+	v_adp->cmd[ch]->isp_buf_num = video_boot_slot_num[ch];
 
+	v_adp->cmd[ch]->direct_i2c_mode = 1;
 	if (video_boot_stream.fcs_isp_ae_enable) {
 		v_adp->cmd[ch]->set_AE_init_flag = 1;
 		v_adp->cmd[ch]->all_init_iq_set_flag = 1;
-		v_adp->cmd[ch]->direct_i2c_mode = 1;
 		v_adp->cmd[ch]->init_exposure = video_boot_stream.fcs_isp_ae_init_exposure;
 		v_adp->cmd[ch]->init_gain = video_boot_stream.fcs_isp_ae_init_gain;
 	}
@@ -315,9 +441,9 @@ int video_boot_open(video_boot_params_t *v_stream)
 		v_adp->cmd[ch]->gray_mode = video_boot_stream.fcs_isp_gray_mode;
 	}
 
-	if (video_boot_stream.video_drop_frame[ch]) {
+	if (video_boot_stream.video_drop_frame[ch_index]) {
 		v_adp->cmd[ch]->all_init_iq_set_flag = 1;
-		v_adp->cmd[ch]->drop_frame_num = video_boot_stream.video_drop_frame[ch];
+		v_adp->cmd[ch]->drop_frame_num = video_boot_stream.video_drop_frame[ch_index];
 	}
 
 	if (v_stream->use_roi) {
@@ -341,6 +467,7 @@ int video_boot_open(video_boot_params_t *v_stream)
 		video_boot_set_private_mask(ch, &video_boot_stream.private_mask);
 	}
 	if (video_boot_stream.meta_enable) {
+#if 0
 		int meta_size = video_boot_stream.meta_size + sizeof(isp_meta_t) + sizeof(isp_statis_meta_t);
 
 		meta_size = meta_size + meta_size / 4; //Add the extra buffer to dummy bytes
@@ -350,11 +477,28 @@ int video_boot_open(video_boot_params_t *v_stream)
 		video_boot_stream.fcs_meta_offset = meta_size / 0xff;
 		video_boot_stream.fcs_meta_total_size = meta_size;
 		v_adp->cmd[ch]->isp_meta_out = 1;
-		v_adp->cmd[ch]->userData = meta_size;
-
-		if (v_adp->cmd[ch]->userData > VIDEO_BOOT_META_REV_BUF) {
-			dbg_printf("Meta size %d is exceed the sei buffer %d\r\n", v_adp->cmd[ch]->userData, VIDEO_BOOT_META_REV_BUF);
-			v_adp->cmd[ch]->userData = VIDEO_BOOT_META_REV_BUF;
+		v_adp->cmd[ch]->EncuserData = meta_size;
+		v_adp->cmd[ch]->IDRuserData = meta_size;
+		v_adp->cmd[ch]->IDRuserDataDuration = 1;
+#else
+		unsigned int fcs_meta_size;
+		unsigned int fcs_meta_extend_size;
+		video_boot_calcu_meta_size(&fcs_meta_size, &fcs_meta_extend_size);
+		v_adp->cmd[ch]->isp_meta_out = 1;
+		v_adp->cmd[ch]->EncuserData = fcs_meta_size;
+		if (video_boot_stream.extra_fcs_meta_enable_extend) {
+			v_adp->cmd[ch]->IDRuserData = fcs_meta_extend_size;
+		} else {
+			v_adp->cmd[ch]->EncuserData = fcs_meta_size;
+		}
+		v_adp->cmd[ch]->IDRuserDataDuration = 1;
+#endif
+		if (video_boot_stream.video_snapshot[ch_index]) {
+			v_adp->cmd[ch]->JPGuserData = video_boot_stream.fcs_meta_total_size;
+		}
+		if (v_adp->cmd[ch]->EncuserData > VIDEO_BOOT_META_REV_BUF) {
+			dbg_printf("Meta size %d is exceed the sei buffer %d\r\n", v_adp->cmd[ch]->EncuserData, VIDEO_BOOT_META_REV_BUF);
+			v_adp->cmd[ch]->EncuserData = VIDEO_BOOT_META_REV_BUF;
 			dbg_printf("Setup the meta size as %d\r\n", VIDEO_BOOT_META_REV_BUF);
 		}
 	}
@@ -369,6 +513,7 @@ int video_boot_open(video_boot_params_t *v_stream)
 		init_items.init_saturation = video_boot_stream.init_isp_items.init_saturation;
 		init_items.init_wdr_level = video_boot_stream.init_isp_items.init_wdr_level;
 		init_items.init_wdr_mode = video_boot_stream.init_isp_items.init_wdr_mode;
+		init_items.init_mipi_mode = video_boot_stream.init_isp_items.init_mipi_mode;
 		hal_video_set_isp_init_items(ch, &init_items);
 	} else {
 		video_isp_initial_items_t init_items;
@@ -380,6 +525,7 @@ int video_boot_open(video_boot_params_t *v_stream)
 		init_items.init_saturation = 0xffff;
 		init_items.init_wdr_level = 0xffff;
 		init_items.init_wdr_mode = 0xffff;
+		init_items.init_mipi_mode = 0xffff;
 		hal_video_set_isp_init_items(ch, &init_items);
 	}
 
@@ -469,7 +615,7 @@ int video_btldr_process(voe_fcs_load_ctrl_t *pvoe_fcs_ld_ctrl, int *code_start)
 		int fcs_ch = -1;
 		for (i = 0; i < MAX_FCS_CHANNEL; i++) {
 			if (video_boot_stream.video_params[i].fcs) {
-				video_boot_open(&video_boot_stream.video_params[i]);
+				video_boot_open(i, &video_boot_stream.video_params[i]);
 			}
 			if ((fcs_ch == -1) && (video_boot_stream.video_params[i].fcs == 1)) { //Get the first start channel
 				fcs_ch = i;

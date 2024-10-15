@@ -262,8 +262,8 @@ int console_xmodem_rx_file(char *file)
 
 	int eot = 0;
 	int start = 1;
-	int xres;
-
+	int xres;	
+	
 #define FILE_RX_BUF_SIZE 1024
 	// open file or read ftl
 

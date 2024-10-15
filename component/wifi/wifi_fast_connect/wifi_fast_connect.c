@@ -152,8 +152,13 @@ int write_fast_connect_data_to_flash(unsigned int offer_ip, unsigned int server_
 		break;
 	case RTW_SECURITY_WPA_TKIP_PSK:
 	case RTW_SECURITY_WPA_AES_PSK:
+	case RTW_SECURITY_WPA_MIXED_PSK:
 	case RTW_SECURITY_WPA2_AES_PSK:
 	case RTW_SECURITY_WPA2_TKIP_PSK:
+	case RTW_SECURITY_WPA2_MIXED_PSK:
+	case RTW_SECURITY_WPA_WPA2_TKIP_PSK:
+	case RTW_SECURITY_WPA_WPA2_AES_PSK:
+	case RTW_SECURITY_WPA_WPA2_MIXED_PSK:
 #ifdef CONFIG_SAE_SUPPORT
 	case RTW_SECURITY_WPA3_AES_PSK:
 	case RTW_SECURITY_WPA2_WPA3_MIXED:
@@ -231,6 +236,12 @@ int wifi_do_fast_connect(void)
 
 #if CONFIG_LWIP_LAYER
 	netif_set_up(&xnetif[0]);
+#endif
+
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6
+	netif_create_ip6_linklocal_address(&xnetif[0], 1);
+#endif
 #endif
 
 #if CONFIG_AUTO_RECONNECT
@@ -357,8 +368,13 @@ WIFI_RETRY_LOOP:
 			break;
 		case RTW_SECURITY_WPA_TKIP_PSK:
 		case RTW_SECURITY_WPA_AES_PSK:
+		case RTW_SECURITY_WPA_MIXED_PSK:
 		case RTW_SECURITY_WPA2_AES_PSK:
 		case RTW_SECURITY_WPA2_TKIP_PSK:
+		case RTW_SECURITY_WPA2_MIXED_PSK:
+		case RTW_SECURITY_WPA_WPA2_TKIP_PSK:
+		case RTW_SECURITY_WPA_WPA2_AES_PSK:
+		case RTW_SECURITY_WPA_WPA2_MIXED_PSK:
 #ifdef CONFIG_SAE_SUPPORT
 		case RTW_SECURITY_WPA3_AES_PSK:
 		case RTW_SECURITY_WPA2_WPA3_MIXED:
@@ -581,6 +597,11 @@ WIFI_RETRY_LOOP:
 #if CONFIG_LWIP_LAYER
 		if (ret == RTW_SUCCESS) {
 			LwIP_DHCP(0, DHCP_START);
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6_DHCP6
+			LwIP_DHCP6(0, DHCP6_START);
+#endif
+#endif
 		}
 #endif
 		free(data);

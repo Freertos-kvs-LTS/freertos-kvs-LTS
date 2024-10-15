@@ -18,6 +18,13 @@
 #define UNUSED(x) ((void)(x))
 #endif
 
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6
+#include "lwip/dhcp6.h"
+#include "lwip/prot/dhcp6.h"
+#endif
+#endif
+
 /*Initial IP ADDRESS*/
 #ifndef IP_ADDR0
 #define IP_ADDR0   0
@@ -100,6 +107,11 @@
 
 /* Private define ------------------------------------------------------------*/
 #define MAX_DHCP_TRIES 5
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6
+#define MAX_DHCP6_TRIES 5
+#endif
+#endif
 
 /* Private macro -------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
@@ -221,6 +233,12 @@ void LwIP_Init(void)
 
 	lwip_init_done = 1;
 }
+
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6 && (LWIP_IPV6_DHCP6_STATEFUL||LWIP_IPV6_DHCP6_STATELESS)
+extern err_t dhcp6_enable(struct netif *netif);
+#endif
+#endif
 
 #if defined(CONFIG_FAST_DHCP) && CONFIG_FAST_DHCP
 extern uint32_t offer_ip;
@@ -484,6 +502,16 @@ void LwIP_ReleaseIP(uint8_t idx)
 	IP4_ADDR(&gw, 0, 0, 0, 0);
 	netifapi_netif_set_addr(pnetif, &ipaddr, &netmask, &gw);
 #endif
+
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6
+	IP6_ADDR(ip_2_ip6(&ipaddr), 0, 0, 0, 0);
+	for (int idx = 1; idx < LWIP_IPV6_NUM_ADDRESSES; idx++) {
+		netif_ip6_addr_set_state(pnetif, idx, IP6_ADDR_INVALID);
+		netif_ip6_addr_set(pnetif, idx, ip_2_ip6(&ipaddr));
+	}
+#endif
+#endif
 }
 
 struct netconf_api_call_data {
@@ -598,6 +626,121 @@ uint8_t *LwIP_GetIP(uint8_t idx)
 	struct netif *pnetif = &xnetif[idx];
 	return (uint8_t *) & (pnetif->ip_addr);
 }
+
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6
+#if LWIP_IPV6_DHCP6
+uint8_t LwIP_DHCP6(uint8_t idx, uint8_t dhcp6_state)
+{
+	uint8_t *ipv6_global;
+	uint8_t DHCP6_state;
+	struct netif *pnetif = NULL;
+	struct dhcp6 *dhcp6 = NULL;
+	err_t err;
+
+	DHCP6_state = dhcp6_state;
+
+#if !CONFIG_ETHERNET
+	if (idx > 1) {
+		idx = 1;
+	}
+#endif
+
+	pnetif = &xnetif[idx];
+	if (DHCP6_state == 0) {
+		for (int free_idx = 1; free_idx < LWIP_IPV6_NUM_ADDRESSES; free_idx++) {
+			ip_addr_set_zero(&pnetif->ip6_addr[free_idx]);
+			netif_ip6_addr_set_state(pnetif, free_idx, IP6_ADDR_INVALID);
+		}
+	}
+
+	dhcp6 = ((struct dhcp6 *)netif_get_client_data(pnetif, LWIP_NETIF_CLIENT_DATA_INDEX_DHCP6));
+	if (!netif_is_up(pnetif)) { // netif should be set up before doing dhcp request (in lwip v2.0.0)
+		netif_set_up(pnetif);
+	}
+
+	for (;;) {
+		//printf("\n\r ========DHCP6_state:%d============\n\r",DHCP6_state);
+		switch (DHCP6_state) {
+
+		case DHCP6_START: {
+			err = dhcp6_enable(pnetif);
+			if (err != ERR_OK) {
+				printf("error in dhcp6_enable\r\n");
+			}
+
+			dhcp6 = ((struct dhcp6 *)netif_get_client_data(pnetif, LWIP_NETIF_CLIENT_DATA_INDEX_DHCP6));
+
+			ipv6_global = 0;
+			DHCP6_state = DHCP6_WAIT_ADDRESS;
+		}
+		break;
+		case DHCP6_WAIT_ADDRESS: {
+
+			/* Read the new IPv6 address */
+			ipv6_global = LwIP_GetIPv6_global(pnetif);
+
+			if (*ipv6_global != 0) {
+
+				DHCP6_state = DHCP6_ADDRESS_ASSIGNED;
+
+				printf("\n\rInterface %d IPv6 address : %02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+					   idx, ipv6_global[0], ipv6_global[1],  ipv6_global[2],  ipv6_global[3],  ipv6_global[4],  ipv6_global[5],
+					   ipv6_global[6], ipv6_global[7], ipv6_global[8], ipv6_global[9], ipv6_global[10], ipv6_global[11],
+					   ipv6_global[12], ipv6_global[13], ipv6_global[14], ipv6_global[15]);
+
+				/*Todo: error_flag for DHCPv6*/
+
+				return DHCP6_ADDRESS_ASSIGNED;
+			}
+
+			else {
+
+				/* DHCP timeout */
+				if (dhcp6->tries > MAX_DHCP6_TRIES || pnetif->rs_timeout) {
+
+					DHCP6_state = DHCP6_TIMEOUT;
+					/* Stop DHCP */
+					dhcp6_stop(pnetif);
+
+					/*Todo: error_flag for DHCPv6*/
+
+#if CONFIG_ETHERNET
+					if (idx == NET_IF_NUM - 1) { // This is the ethernet interface, set it up for static ip address
+						netif_set_up(pnetif);
+					}
+#endif
+					return DHCP6_TIMEOUT;
+				}
+			}
+		}
+		break;
+		case DHCP6_RELEASE_IP:
+			printf("\n\rLwIP_DHCP6: Release ipv6");
+			dhcp6_release(pnetif);
+			return DHCP6_RELEASE_IP;
+		case DHCP6_STOP:
+			printf("\n\rLwIP_DHCP6: dhcp6 stop.");
+			dhcp6_stop(pnetif);
+			return DHCP6_STOP;
+		default:
+			break;
+		}
+		vTaskDelay(30);
+	}
+}
+#endif
+uint8_t *LwIP_GetIPv6_linklocal(struct netif *pnetif)
+{
+	return (uint8_t *) netif_ip6_addr(pnetif, 0)->addr;
+}
+
+uint8_t *LwIP_GetIPv6_global(struct netif *pnetif)
+{
+	return (uint8_t *) netif_ip6_addr(pnetif, 1)->addr;
+}
+#endif
+#endif
 
 uint8_t *LwIP_GetGW(uint8_t idx)
 {
@@ -737,6 +880,9 @@ void LwIP_SetIP(uint8_t idx, u32_t addr, u32_t netmask_addr, u32_t gw_addr)
 #include <lwip/autoip.h>
 #if LWIP_VERSION_MAJOR >= 2
 #include <lwip/prot/autoip.h>
+#if LWIP_VERSION_MINOR >= 2
+#include <lwip/prot/acd.h>
+#endif
 #endif
 
 void LwIP_AUTOIP(uint8_t idx)
@@ -762,7 +908,11 @@ void LwIP_AUTOIP(uint8_t idx)
 	autoip = pnetif->autoip;
 #endif
 
+#if (LWIP_VERSION_MAJOR >= 2) && (LWIP_VERSION_MINOR >= 2)
+	while (autoip->state == AUTOIP_STATE_CHECKING) {
+#else
 	while ((autoip->state == AUTOIP_STATE_PROBING) || (autoip->state == AUTOIP_STATE_ANNOUNCING)) {
+#endif
 		vTaskDelay(1000);
 	}
 
@@ -857,4 +1007,27 @@ uint32_t LwIP_GetRENEWTIME(uint8_t idx)
 #endif
 
 	return dhcp->t1_renew_time;
+}
+
+struct netif *LwIP_ip4_route_src_hook(const ip4_addr_t *src, const ip4_addr_t *dest)
+{
+	struct netif *netif = NULL;
+
+	/* when src==NULL, the hook is called from ip4_route(dest) */
+	if (src == NULL) {
+		return NULL;
+	}
+
+	/* iterate through netifs */
+	NETIF_FOREACH(netif) {
+		/* is the netif up, does it have a link and a valid address? */
+		if (netif_is_up(netif) && netif_is_link_up(netif) && !ip4_addr_isany_val(*netif_ip4_addr(netif))) {
+			/* address matches? */
+			if (ip4_addr_cmp(src, netif_ip4_addr(netif))) {
+				return netif;
+			}
+		}
+	}
+
+	return NULL;
 }

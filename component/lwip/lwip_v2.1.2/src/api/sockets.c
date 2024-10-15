@@ -4446,6 +4446,9 @@ int lwip_resume_tcp(int s)
 #endif
     sock->sendevent = 1;
 
+    extern void tcp_rmv_bound(struct tcp_pcb *pcb);
+    tcp_rmv_bound(pcb);
+
     extern void tcp_reg_active(struct tcp_pcb *pcb);
     tcp_reg_active(pcb);
 

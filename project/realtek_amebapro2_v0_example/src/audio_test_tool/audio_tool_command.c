@@ -646,7 +646,7 @@ void fAUAEC(void *arg)
 		printf("  \r     [EchoTailLen]=32/64/128, the length of the buffer that the echo cancel process will be rely on, the higher it set, the cpu usage is higher\n");
 		printf("  \r     [CNGEnable]=0/1, enable the comfort noise generate or not\n");
 		printf("  \r     [DTControl]=1~3, the coarse tune value of AEC, the higher level more aggressive\n");
-		printf("  \r     [ConvergenceTime]=100~1000, AEC initialization convergence time in msec\n");
+		printf("  \r     [ConvergenceTime]=0~1000, AEC initialization convergence time in msec\n");
 
 		printf("  \r     OPEN AEC by AUAEC=1,4,64,1,1,100\n");
 		printf("  \r     CLOSE AEC by AUAEC=0\n");
@@ -670,8 +670,8 @@ void fAUAEC(void *arg)
 				rx_asp_params.aec_cfg.CNGEnable = atoi(argv[4]);
 				rx_asp_params.aec_cfg.DTControl = atoi(argv[5]);
 				rx_asp_params.aec_cfg.ConvergenceTime = atoi(argv[6]);
-				if (rx_asp_params.aec_cfg.ConvergenceTime < 100 || rx_asp_params.aec_cfg.ConvergenceTime > 1000) {
-					rx_asp_params.aec_cfg.ConvergenceTime = 100;
+				if (rx_asp_params.aec_cfg.ConvergenceTime < 0 || rx_asp_params.aec_cfg.ConvergenceTime > 1000) {
+					rx_asp_params.aec_cfg.ConvergenceTime = 0;
 					printf("invalid AEC ConvergenceTime set to default %d \r\n", rx_asp_params.aec_cfg.ConvergenceTime);
 				}
 			}
@@ -711,7 +711,7 @@ void fAUAEC(void *arg)
 #endif
 }
 
-//Set the AEC
+//Set the AEC run-time enable flag
 void fAUAECRUN(void *arg)
 {
 	int argc = 0;
@@ -736,6 +736,57 @@ void fAUAECRUN(void *arg)
 			printf("AEC run set on\r\n");
 			mm_module_ctrl(audio_save_ctx, CMD_AUDIO_RUN_AEC, 1);
 		}
+	}
+}
+
+//Set/Get the AEC mode
+void fAUAECMODE(void *arg)
+{
+	int argc = 0;
+	char *argv[MAX_ARGC] = {0};
+	if (!arg) {
+		printf("\n\r[AUAECMODE] Set or Get AEC mode: AUAECMODE=[action],[mode]\n");
+
+		printf("  \r     [action]=G or S, G for getting AEC mode, S for setting AEC mode\n");
+		printf("  \r     [mode]=speech ot siren, speech for canceling speech, siren for canceling siren\n");
+
+		printf("  \r     set AEC speech mode by AUAECMODE=S,speech\n");
+		printf("  \r     set AEC siren mode by AUAECMODE=S,siren\n");
+		printf("  \r     get AEC mode by AUAECMODE=G\n");
+		return;
+	}
+
+	//reset array data
+	argc = parse_param(arg, argv);
+	if (argc) {
+		printf("argc = %d\r\n", argc);
+#if (defined(CONFIG_NEWAEC) && CONFIG_NEWAEC)
+		if (strcmp(argv[1], "S") == 0 || strcmp(argv[1], "s") == 0) {
+			if (strcmp(argv[2], "speech") == 0) {
+				printf("Setting AEC speech mode\r\n");
+				mm_module_ctrl(audio_save_ctx, CMD_AUDIO_SET_AEC_MODE, ADAPTATION);
+			} else if (strcmp(argv[2], "siren") == 0) {
+				printf("Setting AEC siren mode\r\n");
+				mm_module_ctrl(audio_save_ctx, CMD_AUDIO_SET_AEC_MODE, ADAPTATION | SIREN_TONE);
+			} else {
+				printf("Setting AEC mode is unknown\r\n");
+			}
+		} else if (strcmp(argv[1], "G") == 0 || strcmp(argv[1], "g") == 0) {
+			uint8_t aec_mode = 0;
+			mm_module_ctrl(audio_save_ctx, CMD_AUDIO_GET_AEC_MODE, (int)&aec_mode);
+			if (aec_mode == (ADAPTATION | SIREN_TONE)) {
+				printf("Get AEC mode (0x%02x) = siren mode\r\n", aec_mode);
+			} else if (aec_mode == ADAPTATION) {
+				printf("Get AEC mode (0x%02x) = speech mode\r\n", aec_mode);
+			} else {
+				printf("Get AEC mode (0x%02x) = unknown mode\r\n", aec_mode);
+			}
+		} else {
+			printf("Unkown action for AUAEC mode, please use G or S\r\n");
+		}
+#else
+		printf("This command is not supported in AEC of the webrtc version \r\n");
+#endif
 	}
 }
 
@@ -1394,6 +1445,80 @@ void fAUSPAGC(void *arg)
 		}
 	}
 #endif
+}
+
+//Set the AGC run-time enable flag
+void fAUAGCRUN(void *arg)
+{
+	int argc = 0;
+	char *argv[MAX_ARGC] = {0};
+	if (!arg) {
+		printf("\n\r[AUAGCRUN] Enable RX/TX(mic/speaker) AGC run or stop: AUAGCRUN=[agc_mask]\n");
+
+		printf("  \r     [agc_mask]=STOP,RX,TX,TRX, STOP for stop both RX and TX, TX for only enable in TX, RX for only enable in RX, TRX for enable both TX and RX\n");
+
+		printf("  \r     OPEN run time AGC only in TX by AUAGCRUN=TX\n");
+		printf("  \r     OPEN run time AGC only in RX by AUAGCRUN=RX\n");
+		printf("  \r     OPEN run time AGC both TX and RX by AUAGCRUN=TRX\n");
+		printf("  \r     CLOSE run time AGC both TX and RX by AUAGCRUN=STOP\n");
+		return;
+	}
+
+	argc = parse_param(arg, argv);
+	if (argc) {
+		if (strcmp(argv[1], "TRX") == 0) {
+			printf("Set up run time AGC in both TX and RX\r\n");
+			mm_module_ctrl(audio_save_ctx, CMD_AUDIO_RUN_AGC, AUDIO_TX_MASK | AUDIO_RX_MASK);
+		} else if (strcmp(argv[1], "TX") == 0) {
+			printf("Set up run time AGC only in TX\r\n");
+			mm_module_ctrl(audio_save_ctx, CMD_AUDIO_RUN_AGC, AUDIO_TX_MASK);
+		} else if (strcmp(argv[1], "RX") == 0) {
+			printf("Set up run time AGC only in RX\r\n");
+			mm_module_ctrl(audio_save_ctx, CMD_AUDIO_RUN_AGC, AUDIO_RX_MASK);
+		} else if (strcmp(argv[1], "STOP") == 0) {
+			printf("disable run time AGC\r\n");
+			mm_module_ctrl(audio_save_ctx, CMD_AUDIO_RUN_AGC, 0);
+		} else {
+			printf("Unknown setting for run time AGC\r\n");
+		}
+	}
+}
+
+//Set the NS run-time enable flag
+void fAUNSRUN(void *arg)
+{
+	int argc = 0;
+	char *argv[MAX_ARGC] = {0};
+	if (!arg) {
+		printf("\n\r[AUNSRUN] Enable RX/TX(mic/speaker) NS run or stop: AUNSRUN=[ns_mask]\n");
+
+		printf("  \r     [ns_mask]=STOP,RX,TX,TRX, STOP for stop both RX and TX, TX for only enable in TX, RX for only enable in RX, TRX for enable both TX and RX\n");
+
+		printf("  \r     OPEN run time NS only in TX by AUNSRUN=TX\n");
+		printf("  \r     OPEN run time NS only in RX by AUNSRUN=RX\n");
+		printf("  \r     OPEN run time NS both TX and RX by AUNSRUN=TRX\n");
+		printf("  \r     CLOSE run time NS both TX and RX by AUNSRUN=STOP\n");
+		return;
+	}
+
+	argc = parse_param(arg, argv);
+	if (argc) {
+		if (strcmp(argv[1], "TRX") == 0) {
+			printf("Set up run time NS in both TX and RX\r\n");
+			mm_module_ctrl(audio_save_ctx, CMD_AUDIO_RUN_NS, AUDIO_TX_MASK | AUDIO_RX_MASK);
+		} else if (strcmp(argv[1], "TX") == 0) {
+			printf("Set up run time NS only in TX\r\n");
+			mm_module_ctrl(audio_save_ctx, CMD_AUDIO_RUN_NS, AUDIO_TX_MASK);
+		} else if (strcmp(argv[1], "RX") == 0) {
+			printf("Set up run time NS only in RX\r\n");
+			mm_module_ctrl(audio_save_ctx, CMD_AUDIO_RUN_NS, AUDIO_RX_MASK);
+		} else if (strcmp(argv[1], "STOP") == 0) {
+			printf("disable run time NS\r\n");
+			mm_module_ctrl(audio_save_ctx, CMD_AUDIO_RUN_NS, 0);
+		} else {
+			printf("Unknown setting for run time NS\r\n");
+		}
+	}
 }
 
 //Set the speaker EQ
@@ -2228,10 +2353,12 @@ void fAUINFO(void *arg)
 	mm_module_ctrl(audio_save_ctx, CMD_AUDIO_GET_RXASP_PARAM, (int)&rx_asp_params);
 	char *audio_json = Get_Audio_CJSON(audio_save_params, rx_asp_params, tx_asp_params);
 	printf("%s\r\n", audio_json);
-	mm_module_ctrl(audio_save_ctx, CMD_AUDIO_PRINT_ASP_INFO, (int)&rx_asp_params);
+	free(audio_json);
+	mm_module_ctrl(audio_save_ctx, CMD_AUDIO_PRINT_ASP_INFO, 0);
+#if defined(CONFIG_NEWAEC) && CONFIG_NEWAEC
 	extern const char *libVQE_get_version(void);
 	printf("%s\r\n", libVQE_get_version());
-	free(audio_json);
+#endif
 
 	//get AEC, AGC, NS run status
 	uint8_t AEC_run_status = 0;
@@ -2336,6 +2463,7 @@ log_item_t at_audio_save_items[ ] = {
 	{"AUMICEQR",    fAUMICEQR,  {NULL, NULL}}, //reset mic eq parameters without audio reset
 	{"AUAEC",       fAUAEC,     {NULL, NULL}}, //open and adjust the SW AEC
 	{"AUAECRUN",    fAUAECRUN,  {NULL, NULL}}, //run/stop the SW AEC for mic if the AEC is initialed
+	{"AUAECMODE",   fAUAECMODE, {NULL, NULL}}, //set/get mode for AEC
 	{"AUNS",        fAUNS,      {NULL, NULL}}, //open and adjust the SW NS for mic
 	{"AUAGC",       fAUAGC,     {NULL, NULL}}, //open and adjust the SW AGC for mic
 	{"AUMICM",      fAUMICM,    {NULL, NULL}}, //enable/disable to mute the mic
@@ -2349,6 +2477,9 @@ log_item_t at_audio_save_items[ ] = {
 	{"AUTXMODE",    fAUTXMODE,  {NULL, NULL}}, //adjust speaker output to playtone/playback/noplay
 	{"TONEDBSW",    fTONEDBSW,  {NULL, NULL}}, //enable tone DB sweep with interval
 	{"AUAMPIN",     fAUAMPIN,   {NULL, NULL}}, //select the speaker amplifier pin
+	//For Audio both speaker and mic
+	{"AUAGCRUN",    fAUAGCRUN,  {NULL, NULL}}, //run/stop the SW AGC for mic/spk if the AGC is initialed
+	{"AUNSRUN",     fAUNSRUN,   {NULL, NULL}}, //run/stop the SW NS for mic/spk if the NS is initialed
 	//For Audio TRX
 	{"AUSR",        fAUSR,      {NULL, NULL}}, //set the audio sample rate for both TRX
 	{"AUTRX",       fAUTRX,     {NULL, NULL}}, //enable/disable the audio TRX

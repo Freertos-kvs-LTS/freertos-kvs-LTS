@@ -202,10 +202,13 @@ static void print_scan_result(rtw_scan_result_t *record)
 			  (record->security == RTW_SECURITY_WEP_PSK) ? "WEP" :
 			  (record->security == RTW_SECURITY_WPA_TKIP_PSK) ? "WPA TKIP" :
 			  (record->security == RTW_SECURITY_WPA_AES_PSK) ? "WPA AES" :
+			  (record->security == RTW_SECURITY_WPA_MIXED_PSK) ? "WPA Mixed" :
 			  (record->security == RTW_SECURITY_WPA2_AES_PSK) ? "WPA2 AES" :
 			  (record->security == RTW_SECURITY_WPA2_TKIP_PSK) ? "WPA2 TKIP" :
 			  (record->security == RTW_SECURITY_WPA2_MIXED_PSK) ? "WPA2 Mixed" :
-			  (record->security == RTW_SECURITY_WPA_WPA2_MIXED) ? "WPA/WPA2 AES" :
+			  (record->security == RTW_SECURITY_WPA_WPA2_TKIP_PSK) ? "WPA/WPA2 TKIP" :
+			  (record->security == RTW_SECURITY_WPA_WPA2_AES_PSK) ? "WPA/WPA2 AES" :
+			  (record->security == RTW_SECURITY_WPA_WPA2_MIXED_PSK) ? "WPA/WPA2 Mixed" :
 			  (record->security == RTW_SECURITY_WPA2_ENTERPRISE) ? "WPA2 Enterprise" :
 			  (record->security == RTW_SECURITY_WPA_WPA2_ENTERPRISE) ? "WPA/WPA2 Enterprise" :
 #ifdef CONFIG_SAE_SUPPORT
@@ -225,15 +228,18 @@ static void print_scan_result(rtw_scan_result_t *record)
 				 (record->security == RTW_SECURITY_WEP_PSK) ? "WEP" :
 				 (record->security == RTW_SECURITY_WPA_TKIP_PSK) ? "WPA TKIP" :
 				 (record->security == RTW_SECURITY_WPA_AES_PSK) ? "WPA AES" :
+				 (record->security == RTW_SECURITY_WPA_MIXED_PSK) ? "WPA Mixed" :
 				 (record->security == RTW_SECURITY_WPA2_AES_PSK) ? "WPA2 AES" :
 				 (record->security == RTW_SECURITY_WPA2_TKIP_PSK) ? "WPA2 TKIP" :
 				 (record->security == RTW_SECURITY_WPA2_MIXED_PSK) ? "WPA2 Mixed" :
-				 (record->security == RTW_SECURITY_WPA_WPA2_MIXED) ? "WPA/WPA2 AES" :
+				 (record->security == RTW_SECURITY_WPA_WPA2_TKIP_PSK) ? "WPA/WPA2 TKIP" :
+				 (record->security == RTW_SECURITY_WPA_WPA2_AES_PSK) ? "WPA/WPA2 AES" :
+				 (record->security == RTW_SECURITY_WPA_WPA2_MIXED_PSK) ? "WPA/WPA2 Mixed" :
 				 (record->security == RTW_SECURITY_WPA2_ENTERPRISE) ? "WPA2 Enterprise" :
 				 (record->security == RTW_SECURITY_WPA_WPA2_ENTERPRISE) ? "WPA/WPA2 Enterprise" :
 #ifdef CONFIG_SAE_SUPPORT
 				 (record->security == RTW_SECURITY_WPA3_AES_PSK) ? "WPA3-SAE AES" :
-				 (record->security == RTW_SECURITY_WPA3_GCMP_PSK) ? "WPA3-SAE GCMP AES" :
+				 (record->security == RTW_SECURITY_WPA3_GCMP_PSK) ? "WPA3-SAE GCMP" :
 				 (record->security == RTW_SECURITY_WPA2_WPA3_MIXED) ? "WPA2/WPA3-SAE AES" :
 #endif
 				 "Unknown");
@@ -360,17 +366,47 @@ static void print_wifi_setting(const char *ifname, rtw_wifi_setting_t *pSetting)
 #endif
 		RTW_API_INFO("\n\r  SECURITY => WPA AES");
 		break;
+	case RTW_SECURITY_WPA_MIXED_PSK:
+#if (defined(SUPPORT_UART_LOG_SERVICE) && SUPPORT_UART_LOG_SERVICE) || (defined(CONFIG_EXAMPLE_SPI_ATCMD) && CONFIG_EXAMPLE_SPI_ATCMD)
+		at_printf("WPA MIX,");
+#endif
+		RTW_API_INFO("\n\r  SECURITY => WPA Mixed");
+		break;
 	case RTW_SECURITY_WPA2_AES_PSK:
 #if (defined(SUPPORT_UART_LOG_SERVICE) && SUPPORT_UART_LOG_SERVICE) || (defined(CONFIG_EXAMPLE_SPI_ATCMD) && CONFIG_EXAMPLE_SPI_ATCMD)
 		at_printf("WPA2 AES,");
 #endif
 		RTW_API_INFO("\n\r  SECURITY => WPA2 AES");
 		break;
+	case RTW_SECURITY_WPA2_MIXED_PSK:
+#if (defined(SUPPORT_UART_LOG_SERVICE) && SUPPORT_UART_LOG_SERVICE) || (defined(CONFIG_EXAMPLE_SPI_ATCMD) && CONFIG_EXAMPLE_SPI_ATCMD)
+		at_printf("WPA2 Mixd,");
+#endif
+		RTW_API_INFO("\n\r  SECURITY => WPA2 Mixed");
+		break;
+	case RTW_SECURITY_WPA_WPA2_TKIP_PSK:
+#if (defined(SUPPORT_UART_LOG_SERVICE) && SUPPORT_UART_LOG_SERVICE) || (defined(CONFIG_EXAMPLE_SPI_ATCMD) && CONFIG_EXAMPLE_SPI_ATCMD)
+		at_printf("WPA/WPA2 TKIP,");
+#endif
+		RTW_API_INFO("\n\r  SECURITY => WPA/WPA2 TKIP");
+		break;
+	case RTW_SECURITY_WPA_WPA2_AES_PSK:
+#if (defined(SUPPORT_UART_LOG_SERVICE) && SUPPORT_UART_LOG_SERVICE) || (defined(CONFIG_EXAMPLE_SPI_ATCMD) && CONFIG_EXAMPLE_SPI_ATCMD)
+		at_printf("WPA/WPA2 AES,");
+#endif
+		RTW_API_INFO("\n\r  SECURITY => WPA/WPA2 AES");
+		break;
+	case RTW_SECURITY_WPA_WPA2_MIXED_PSK:
+#if (defined(SUPPORT_UART_LOG_SERVICE) && SUPPORT_UART_LOG_SERVICE) || (defined(CONFIG_EXAMPLE_SPI_ATCMD) && CONFIG_EXAMPLE_SPI_ATCMD)
+		at_printf("WPA/WPA2 Mixd,");
+#endif
+		RTW_API_INFO("\n\r  SECURITY => WPA/WPA2 Mixed");
+		break;
 	case RTW_SECURITY_WPA3_AES_PSK:
 #if (defined(SUPPORT_UART_LOG_SERVICE) && SUPPORT_UART_LOG_SERVICE) || (defined(CONFIG_EXAMPLE_SPI_ATCMD) && CONFIG_EXAMPLE_SPI_ATCMD)
-		at_printf("WPA3 AES,");
+		at_printf("WPA3 SAE AES,");
 #endif
-		RTW_API_INFO("\n\r  SECURITY => WPA3 AES");
+		RTW_API_INFO("\n\r  SECURITY => WPA3 SAE AES");
 		break;
 	case RTW_SECURITY_WPA3_GCMP_PSK:
 #if (defined(SUPPORT_UART_LOG_SERVICE) && SUPPORT_UART_LOG_SERVICE) || (defined(CONFIG_EXAMPLE_SPI_ATCMD) && CONFIG_EXAMPLE_SPI_ATCMD)
@@ -604,6 +640,14 @@ void fATWx(void *arg)
 #if CONFIG_LWIP_LAYER
 	u8 *mac = LwIP_GetMAC(0);
 	u8 *ip = LwIP_GetIP(0);
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6
+	u8 *ipv6_0 = LwIP_GetIPv6_linklocal(&xnetif[0]);
+#if LWIP_IPV6_DHCP6
+	u8 *ipv6_1 = LwIP_GetIPv6_global(&xnetif[0]);
+#endif
+#endif
+#endif
 	u8 *gw = LwIP_GetGW(0);
 	u8 *msk = LwIP_GetMASK(0);
 #endif
@@ -621,6 +665,14 @@ void fATWx(void *arg)
 #if CONFIG_LWIP_LAYER
 			mac = LwIP_GetMAC(i);
 			ip = LwIP_GetIP(i);
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6
+			ipv6_0 = LwIP_GetIPv6_linklocal(&xnetif[i]);
+#if LWIP_IPV6_DHCP6
+			ipv6_1 = LwIP_GetIPv6_global(&xnetif[i]);
+#endif
+#endif
+#endif
 			gw = LwIP_GetGW(i);
 			msk = LwIP_GetMASK(i);
 #endif
@@ -648,6 +700,18 @@ void fATWx(void *arg)
 			printf("\n\r==============================");
 			printf("\n\r\tMAC => %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]) ;
 			printf("\n\r\tIP  => %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6
+			printf("\n\r\tLink-local IPV6 => %02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+				   ipv6_0[0], ipv6_0[1],  ipv6_0[2],  ipv6_0[3],  ipv6_0[4],  ipv6_0[5],  ipv6_0[6], ipv6_0[7],
+				   ipv6_0[8], ipv6_0[9], ipv6_0[10], ipv6_0[11], ipv6_0[12], ipv6_0[13], ipv6_0[14], ipv6_0[15]);
+#if LWIP_IPV6_DHCP6
+			printf("\n\r\tIPV6            => %02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+				   ipv6_1[0], ipv6_1[1],  ipv6_1[2],  ipv6_1[3],  ipv6_1[4],  ipv6_1[5],  ipv6_1[6], ipv6_1[7],
+				   ipv6_1[8], ipv6_1[9], ipv6_1[10], ipv6_1[11], ipv6_1[12], ipv6_1[13], ipv6_1[14], ipv6_1[15]);
+#endif
+#endif
+#endif
 			printf("\n\r\tGW  => %d.%d.%d.%d", gw[0], gw[1], gw[2], gw[3]);
 			printf("\n\r\tmsk  => %d.%d.%d.%d\n\r", msk[0], msk[1], msk[2], msk[3]);
 #endif
@@ -1219,6 +1283,11 @@ void fATWC(void *arg)
 #if CONFIG_LWIP_LAYER
 	/* Start DHCPClient */
 	LwIP_DHCP(0, DHCP_START);
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6_DHCP6
+	LwIP_DHCP6(0, DHCP6_START);
+#endif
+#endif
 	tick3 = xTaskGetTickCount();
 	printf("\r\n\nGot IP after %d ms.\n", (unsigned int)(tick3 - tick1));
 #endif
@@ -1342,13 +1411,13 @@ void fATWP(void *arg)
 		printf("[ATWP]Usage: ATWP=0/1\n\r");
 		return;
 	}
-	unsigned int parm = atoi((const char *)(arg));
+	char parm = ((const char *)arg)[0];
 	printf("[ATWP]: _AT_WLAN_POWER_[%s]\n\r", parm ? "ON" : "OFF");
-	if (parm == 1) {
+	if (parm == '1') {
 		if (wifi_on(RTW_MODE_STA) < 0) {
 			printf("\n\rERROR: Wifi on failed!\n");
 		}
-	} else if (parm == 0) {
+	} else if (parm == '0') {
 		wifi_off();
 	} else {
 		printf("[ATWP]Usage: ATWP=0/1\n\r");

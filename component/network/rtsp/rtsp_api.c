@@ -345,7 +345,7 @@ struct rtsp_context *rtsp_context_create(uint8_t nb_streams)
 	rtsp_ctx->state = RTSP_INIT;
 	rtsp_transport_init(rtsp_ctx);
 	rtsp_session_init(rtsp_ctx);
-	rtsp_ctx->is_rtsp_start = 0;
+	rtsp_ctx->rtsp_server_state = RTSP_SERV_INIT;
 	rtw_init_sema(&rtsp_ctx->start_rtsp_sema, 0);
 	rtw_init_sema(&rtsp_ctx->start_rtp_service_sema, 0);
 	rtsp_ctx->is_rtp_start = 0;
@@ -396,12 +396,15 @@ void rtsp_context_free(struct rtsp_context *rtsp_ctx)
 		}
 		if (rtsp_ctx->stream_ctx) {
 			free(rtsp_ctx->stream_ctx);
+			rtsp_ctx->stream_ctx = NULL;
 		}
 		if (rtsp_ctx->response) {
 			free(rtsp_ctx->response);
+			rtsp_ctx->response = NULL;
 		}
 		if (rtsp_ctx->connect_ctx.remote_ip) {
 			free(rtsp_ctx->connect_ctx.remote_ip);
+			rtsp_ctx->connect_ctx.remote_ip = NULL;
 		}
 		rtw_free_sema(&rtsp_ctx->start_rtp_sema);
 		rtw_free_sema(&rtsp_ctx->rtp_input_sema);
@@ -417,6 +420,7 @@ void rtsp_context_free(struct rtsp_context *rtsp_ctx)
 		rtsp_put_number(rtsp_ctx->id, RTSP_CTX_ID_BASE, &rtsp_ctx_id_bitmap, &rtsp_ctx_id_bitmap_lock);
 		rtw_mutex_free(&rtsp_ctx->socket_lock);
 		free(rtsp_ctx);
+		rtsp_ctx = NULL;
 	}
 	if (rtsp_ctx_id_bitmap == 0) {
 		rtw_mutex_free(&rtsp_ctx_id_bitmap_lock);
@@ -1169,25 +1173,36 @@ int rtsp_is_stream_enabled(struct rtsp_context *rtsp_ctx)
 	return rtsp_ctx->allow_stream;
 }
 
-void rtsp_enable_service(struct rtsp_context *rtsp_ctx)
+int rtsp_enable_service(struct rtsp_context *rtsp_ctx)
 {
-	rtsp_ctx->is_rtsp_start = 1;
+	if ((rtsp_ctx->state & RTSP_SERV_MASK) == RTSP_SERV_INIT) {
+		rtsp_ctx->rtsp_server_state = RTSP_SERV_RUN;
+		return 0;
+	} else {
+		RTSP_DBG_ERROR("rtsp service init failed, there is an on-going rtsp service\r\n");
+		return -1;
+	}
 }
 
 void rtsp_disable_service(struct rtsp_context *rtsp_ctx)
 {
-	rtsp_ctx->is_rtsp_start = 0;
+	rtsp_ctx->rtsp_server_state = RTSP_SERV_SET_EXIT;
 }
 
 int rtsp_is_service_enabled(struct rtsp_context *rtsp_ctx)
 {
-	return rtsp_ctx->is_rtsp_start;
+	return rtsp_ctx->rtsp_server_state & RTSP_SERV_RUN;
 }
 
 void rtsp_close_service(struct rtsp_context *rtsp_ctx)
 {
 	rtsp_disable_stream(rtsp_ctx);
 	rtsp_disable_service(rtsp_ctx);
+	while (rtsp_ctx->rtsp_server_state != RTSP_SERV_EXIT) {
+		vTaskDelay(1);
+	}
+	rtsp_ctx->rtsp_server_state = RTSP_SERV_INIT;
+	printf("rtsp close service successfully\r\n");
 }
 
 void show_result_statistics(struct rtsp_context *rtsp_ctx)
@@ -2026,15 +2041,17 @@ void rtcp_service_init(void *param)
 void rtsp_service_init(void *param)
 {
 	struct rtsp_context *rtsp_ctx = (struct rtsp_context *) param;
-	rtsp_enable_service(rtsp_ctx);
-	rtw_up_sema(&rtsp_ctx->start_rtp_service_sema);
-	while (rtsp_is_service_enabled(rtsp_ctx)) {
-		if (rtw_down_timeout_sema(&rtsp_ctx->start_rtsp_sema, 100)) {
-			//rtsp start stream
-			rtsp_start_service(rtsp_ctx);
+	if (!rtsp_enable_service(rtsp_ctx)) {
+		rtw_up_sema(&rtsp_ctx->start_rtp_service_sema);
+		while ((rtsp_ctx->rtsp_server_state & RTSP_SERV_SET_EXIT) == 0) {
+			if (rtw_down_timeout_sema(&rtsp_ctx->start_rtsp_sema, 100)) {
+				//rtsp start stream
+				rtsp_start_service(rtsp_ctx);
+			}
 		}
+		rtsp_ctx->rtsp_server_state = RTSP_SERV_EXIT;
+		RTSP_DBG_INFO("end of rtsp service\r\n");
 	}
-	RTSP_DBG_ERROR("rtsp service closed");
 	vTaskDelete(NULL);
 }
 
@@ -2043,7 +2060,7 @@ int rtsp_open(struct rtsp_context *rtsp_ctx)
 {
 	if (xTaskCreate(rtsp_service_init, ((const char *)"rtsp_service_init"), 2048, (void *)rtsp_ctx, RTSP_SERVICE_PRIORITY, NULL) != pdPASS) {
 		RTSP_DBG_ERROR("rtp_start_service: Create Task Error\n");
-		goto error;
+		return -1;
 	}
 
 	//rtsp_service_priority = uxTaskPriorityGet(NULL);

@@ -77,7 +77,7 @@ static void mark_ip_in_table(uint8_t d)
 		printf("\r\n ip_table.ip_range[3] = 0x%x\r\n", ip_table.ip_range[3]);
 #endif
 	} else if (128 < d && d <= 160) {
-		ip_table.ip_range[4] = MARK_RANGE5_IP_BIT(ip_table, d);
+		ip_table.ip_range[4] = MARK_RANGE5_IP_BIT(ip_table, (d - 128));
 #if (debug_dhcps)
 		printf("\r\n ip_table.ip_range[4] = 0x%x\r\n", ip_table.ip_range[4]);
 #endif

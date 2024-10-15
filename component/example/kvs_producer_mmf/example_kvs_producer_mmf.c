@@ -381,9 +381,7 @@ static void fKVSC(void *arg)
 #endif
 	mm_module_close(kvs_producer_v1_ctx);
 
-	//Video Deinit
-	video_deinit();
-
+	video_voe_release();
 	printf(">>>>>> Deinit take %d ms \r\n", xTaskGetTickCount() - t0);
 }
 

@@ -26,7 +26,7 @@
 //#define META_DATA_TEST
 //#define ISP_CONTROL_TEST
 video_boot_stream_t video_boot_stream = {
-	.video_params[STREAM_V1].stream_id = STREAM_V1,
+	.video_params[STREAM_V1].stream_id = STREAM_ID_V1,
 	.video_params[STREAM_V1].type = CODEC_H264,
 	.video_params[STREAM_V1].resolution = 0,
 	.video_params[STREAM_V1].width  = sensor_params[USE_SENSOR].sensor_width,
@@ -50,7 +50,7 @@ video_boot_stream_t video_boot_stream = {
 	.auto_rate_control[STREAM_V1].maximun_bitrate = 2 * 1024 * 1024 * 1.2,
 	.auto_rate_control[STREAM_V1].minimum_bitrate = 2 * 1024 * 1024 * 0.8,
 	.auto_rate_control[STREAM_V1].target_bitrate = 2 * 1024 * 1024,
-	.video_params[STREAM_V2].stream_id = STREAM_V2,
+	.video_params[STREAM_V2].stream_id = STREAM_ID_V2,
 	.video_params[STREAM_V2].type = CODEC_H264,
 	.video_params[STREAM_V2].resolution = 0,
 	.video_params[STREAM_V2].width = 1280,
@@ -74,13 +74,13 @@ video_boot_stream_t video_boot_stream = {
 	.auto_rate_control[STREAM_V2].maximun_bitrate = 0,
 	.auto_rate_control[STREAM_V2].minimum_bitrate = 0,
 	.auto_rate_control[STREAM_V2].target_bitrate = 0,
-	.video_params[STREAM_V3].stream_id = STREAM_V3,
-	.video_params[STREAM_V3].type = CODEC_H264,
+	.video_params[STREAM_V3].stream_id = STREAM_ID_V3,
+	.video_params[STREAM_V3].type = CODEC_NV12,
 	.video_params[STREAM_V3].resolution = 0,
-	.video_params[STREAM_V3].width = 0,
-	.video_params[STREAM_V3].height = 0,
+	.video_params[STREAM_V3].width = 640,
+	.video_params[STREAM_V3].height = 480,
 	.video_params[STREAM_V3].bps = 0,
-	.video_params[STREAM_V3].fps = 0,
+	.video_params[STREAM_V3].fps = 10,
 	.video_params[STREAM_V3].gop = 0,
 	.video_params[STREAM_V3].rc_mode = 0,
 	.video_params[STREAM_V3].minQp = 0,
@@ -94,13 +94,13 @@ video_boot_stream_t video_boot_stream = {
 	.video_params[STREAM_V3].fcs = 0,
 	.video_snapshot[STREAM_V3] = 0,
 	.video_drop_frame[STREAM_V3] = 0,
-	.video_params[STREAM_V4].stream_id = STREAM_V4,
-	.video_params[STREAM_V4].type = 0,
+	.video_params[STREAM_V4].stream_id = STREAM_ID_V4,
+	.video_params[STREAM_V4].type = CODEC_RGB,
 	.video_params[STREAM_V4].resolution = 0,
 	.video_params[STREAM_V4].width = 640,
 	.video_params[STREAM_V4].height = 480,
 	.video_params[STREAM_V4].bps = 0,
-	.video_params[STREAM_V4].fps = 0,
+	.video_params[STREAM_V4].fps = 10,
 	.video_params[STREAM_V4].gop = 0,
 	.video_params[STREAM_V4].rc_mode = 0,
 	.video_params[STREAM_V4].minQp = 0,
@@ -307,38 +307,68 @@ void user_boot_config_init(void *parm)
 	}
 #endif
 
-	if (boot_data[0] == 'F' && boot_data[1] == 'C' && boot_data[2] == 'S' && boot_data[3] == 'D') {
-		unsigned int checksum_tag = boot_data[4] | boot_data[5] << 8 | boot_data[6] << 16 | boot_data[7] << 24;
-		unsigned int checksum_value = 0;
-		for (int i = 0; i < sizeof(video_boot_stream_t); i++) {
-			checksum_value += boot_data[i + 8];
-		}
-		if (checksum_tag == checksum_value) {
-			fcs_data = (video_boot_stream_t *)(boot_data + 8);
-			if ((video_boot_stream.isp_info.sensor_width == fcs_data->isp_info.sensor_width) &&
-				(video_boot_stream.isp_info.sensor_height == fcs_data->isp_info.sensor_height)) {
-				uint32_t fcs_start_time = video_boot_stream.fcs_start_time;
-				memcpy(&video_boot_stream, fcs_data, sizeof(video_boot_stream_t));
-				video_boot_stream.fcs_start_time = fcs_start_time;
-				//dbg_printf("Update parameter\r\n");
-			} else {
-				if (fcs_data->fcs_isp_ae_enable && fcs_data->fcs_isp_awb_enable) {
-					//only copy ae, awb 6 parameters
-					memcpy(&(video_boot_stream.fcs_isp_ae_enable), &(fcs_data->fcs_isp_ae_enable), sizeof(uint32_t) * 6);
-					dbg_printf("fcs isp init ae,awb\r\n");
+	//load fcs data from retention
+	int fcs_load_from_retention = 0;
+	uint8_t fcs_tag[4] = {'F', 'C', 'S', 'D'};
+	if (retention_table.reserve_data[0].tag == *(uint32_t *)fcs_tag) {
+		if (retention_table.reserve_data[0].data_len == sizeof(video_boot_stream_t)) {
+			video_boot_stream_t *fcs_retention_data = (video_boot_stream_t *) retention_table.reserve_data[0].address;
+			uint8_t *checksum_array = (uint8_t *) fcs_retention_data;
+			uint32_t checksum_value = 0;
+			for (int i = 0; i < sizeof(video_boot_stream_t); i++) {
+				checksum_value += checksum_array[i];
+			}
+			if (retention_table.reserve_data[0].checksum == checksum_value) {
+				if (video_boot_stream.isp_info.sensor_width == fcs_retention_data->isp_info.sensor_width &&
+					video_boot_stream.isp_info.sensor_height == fcs_retention_data->isp_info.sensor_height) {
+					uint32_t fcs_start_time = video_boot_stream.fcs_start_time;
+					memcpy(&video_boot_stream, fcs_retention_data, sizeof(video_boot_stream_t));
+					video_boot_stream.fcs_start_time = fcs_start_time;
 				}
+				//dbg_printf("load fcs retention success\r\n");
+				fcs_load_from_retention = 1;
+			} else {
+				dbg_printf("check sum fail %d %d\r\n", retention_table.reserve_data[0].checksum, checksum_value);
+			}
+		}
+	}
+
+	//if load fcs data from retention fail, load fcs data from flash
+	if (!fcs_load_from_retention) {
+		uint32_t boot_data_tag = *(uint32_t *)boot_data; //tag in boot_data[0]~[3]
+		if (boot_data_tag == *(uint32_t *)fcs_tag) {
+			unsigned int checksum_tag = boot_data[4] | boot_data[5] << 8 | boot_data[6] << 16 | boot_data[7] << 24;
+			unsigned int checksum_value = 0;
+			for (int i = 0; i < sizeof(video_boot_stream_t); i++) {
+				checksum_value += boot_data[i + 8];
+			}
+			if (checksum_tag == checksum_value) {
+				fcs_data = (video_boot_stream_t *)(boot_data + 8);
+				if ((video_boot_stream.isp_info.sensor_width == fcs_data->isp_info.sensor_width) &&
+					(video_boot_stream.isp_info.sensor_height == fcs_data->isp_info.sensor_height)) {
+					uint32_t fcs_start_time = video_boot_stream.fcs_start_time;
+					memcpy(&video_boot_stream, fcs_data, sizeof(video_boot_stream_t));
+					video_boot_stream.fcs_start_time = fcs_start_time;
+					//dbg_printf("Update parameter\r\n");
+				} else {
+					if (fcs_data->fcs_isp_ae_enable && fcs_data->fcs_isp_awb_enable) {
+						//only copy ae, awb 6 parameters
+						memcpy(&(video_boot_stream.fcs_isp_ae_enable), &(fcs_data->fcs_isp_ae_enable), sizeof(uint32_t) * 6);
+						//dbg_printf("fcs isp init ae,awb\r\n");
+					}
+				}
+			} else {
+				dbg_printf("Check sum fail\r\n");
 			}
 		} else {
-			dbg_printf("Check sum fail\r\n");
+			dbg_printf("Can't find %x %x %x %x\r\n", boot_data[0], boot_data[1], boot_data[2], boot_data[3]);
 		}
-	} else {
-		dbg_printf("Can't find %x %x %x %x\r\n", boot_data[0], boot_data[1], boot_data[2], boot_data[3]);
 	}
 
 #ifdef USE_ISP_RETENTION_DATA
 	//dbg_printf("fcs retention table address 0x%x\r\n", &retention_table.isp_init_data.tag);
-	uint8_t tag[4] = {'I', 'S', 'P', 'D'};
-	if (retention_table.isp_init_data.tag == *(uint32_t *)tag) {
+	uint8_t isp_tag[4] = {'I', 'S', 'P', 'D'};
+	if (retention_table.isp_init_data.tag == *(uint32_t *)isp_tag) {
 		if (retention_table.isp_init_data.data_len == sizeof(isp_retention_data_t)) {
 			isp_retention_data_t *isp_retention_data = (isp_retention_data_t *) retention_table.isp_init_data.address;
 			uint8_t *checksum_array = (uint8_t *) & (isp_retention_data->ae_exposure);
@@ -437,6 +467,7 @@ void user_boot_config_init(void *parm)
 #ifdef META_DATA_TEST
 	video_boot_stream.meta_enable = 1;
 	video_boot_stream.meta_size = VIDEO_BOOT_META_USER_SIZE;
+	//video_boot_stream.extra_fcs_meta_enable_extend = 1;//Insert the 3A info into Meta
 #endif
 #ifdef ISP_CONTROL_TEST
 	//If you don't want to setup the parameters, you can setup the 0xffff to skip the procedure.For example video_boot_stream.init_isp_items.init_brightness = 0xffff;
@@ -449,5 +480,6 @@ void user_boot_config_init(void *parm)
 	video_boot_stream.init_isp_items.init_saturation = 75;    //Default:50
 	video_boot_stream.init_isp_items.init_wdr_level = 80;     //Default:50
 	video_boot_stream.init_isp_items.init_wdr_mode = 1;       //Default:0
+	video_boot_stream.init_isp_items.init_mipi_mode = 0;	  //Default:0
 #endif
 }

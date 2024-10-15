@@ -118,6 +118,10 @@ unsigned char cal_iq_buf[FW_CAL_IQ_SIZE];
 SECTION(".sdram.bss")
 unsigned char video_sei_buf[VIDEO_META_REV_BUF];
 
+static af_statis_t af_result;
+static ae_statis_t ae_result;
+static awb_statis_t awb_result;
+
 int video_dbg_level = VIDEO_LOG_MSG;
 
 #define video_dprintf(level, ...) if(level >= video_dbg_level) printf(__VA_ARGS__)
@@ -469,11 +473,15 @@ int video_ctrl(int ch, int cmd, int arg)
 	}
 	break;
 	case VIDEO_ISPFPS: {
-		rate_ctrl_s rc_ctrl;
-		memset(&rc_ctrl, 0x0, sizeof(rate_ctrl_s));
-		rc_ctrl.isp_fps = arg;
-		ret = hal_video_isp_ctrl(0xF022, 1, &arg);
-		ret = hal_video_set_rc(&rc_ctrl, ch);
+		int video_type = voe_info.video_info[ch].type;
+		ret = hal_video_set_isp_stream_fps(ch, arg);
+		if (video_type != VIDEO_NV12 && video_type != VIDEO_NV16 && video_type != VIDEO_RGB) {
+			//sync isp fps to rc control
+			rate_ctrl_s rc_ctrl;
+			memset(&rc_ctrl, 0x0, sizeof(rate_ctrl_s));
+			rc_ctrl.isp_fps = arg;
+			hal_video_set_rc(&rc_ctrl, ch);
+		}
 	}
 	break;
 	case VIDEO_FPS: {
@@ -894,6 +902,10 @@ int video_buf_heap_calc(int v1_enable, int v1_w, int v1_h, int v1_bps, int v1_en
 
 void video_buf_release(void)
 {
+	if (video_open_status() != 0) {
+		video_dprintf(VIDEO_LOG_ERR, "[%s] video not closed\n", __FUNCTION__);
+		return;
+	}
 	if ((void *)(voe_info.voe_heap_addr) != NULL) {
 #if VIDEO_MPU_VOE_HEAP
 		setup_mpu((uint32_t)voe_info.voe_heap_addr, (uint32_t)voe_info.voe_heap_addr + voe_info.voe_heap_size - 1, 1, 0);
@@ -1225,6 +1237,51 @@ int video_pre_init_get_meta_enable(void)
 	return video_pre_init_param.meta_enable;
 }
 
+void video_calcu_meta_size(video_pre_init_params_t *parm)
+{
+	int meta_size = 0;
+	int meta_loop = 0;
+	int enable_extend = 0;
+	if (parm->meta_enable_extend) {
+		meta_loop = 2;
+	} else {
+		meta_loop = 1;
+	}
+	for (int i = 0; i < meta_loop; i++) {
+		if (i == 1 && parm->meta_enable_extend) {
+			enable_extend = 1;//Insert the extend meta size
+		}
+		if (enable_extend) {
+			meta_size = parm->meta_size + sizeof(isp_meta_t) + sizeof(isp_statis_meta_t) + sizeof(af_statis_t) + sizeof(ae_statis_t) + sizeof(awb_statis_t);
+		} else {
+			meta_size = parm->meta_size + sizeof(isp_meta_t) + sizeof(isp_statis_meta_t);
+		}
+		meta_size = meta_size + meta_size / 2; //Add the extra buffer to dummy bytes
+		if (meta_size % 32) { //align 32 byte
+			meta_size = meta_size + (32 - (meta_size % 32));
+		}
+		if (enable_extend) {
+			parm->video_meta_extend_offset = meta_size / 0xff;
+			parm->video_meta_extend_total_size = meta_size;
+			if (parm->video_meta_extend_total_size > VIDEO_META_REV_BUF) {
+				video_dprintf(VIDEO_LOG_MSG, "Meta size %d is exceed the sei buffer %d\r\n", meta_size, VIDEO_META_REV_BUF);
+				parm->video_meta_extend_total_size = VIDEO_META_REV_BUF;
+				//v_adp->cmd[ch]->userData = VIDEO_META_REV_BUF;
+				video_dprintf(VIDEO_LOG_MSG, "Setup the meta size as %d\r\n", VIDEO_META_REV_BUF);
+			}
+		} else {
+			parm->video_meta_offset = meta_size / 0xff;
+			parm->video_meta_total_size = meta_size;
+			if (parm->video_meta_total_size > VIDEO_META_REV_BUF) {
+				video_dprintf(VIDEO_LOG_ERR, "Meta size %d is exceed the sei buffer %d\r\n", meta_size, VIDEO_META_REV_BUF);
+				parm->video_meta_total_size = VIDEO_META_REV_BUF;
+				//v_adp->cmd[ch]->userData = VIDEO_META_REV_BUF;
+				video_dprintf(VIDEO_LOG_ERR, "Setup the meta size as %d\r\n", VIDEO_META_REV_BUF);
+			}
+		}
+	}
+}
+
 void video_pre_init_procedure(int ch, video_pre_init_params_t *parm)
 {
 	video_dprintf(VIDEO_LOG_MSG, "[%s] START\r\n", __FUNCTION__);
@@ -1251,14 +1308,15 @@ void video_pre_init_procedure(int ch, video_pre_init_params_t *parm)
 		hal_video_set_isp_init_items(ch, &parm->init_isp_items);
 	} else {
 		video_isp_initial_items_t init_items;
-		init_items.init_brightness = 0xffff;
-		init_items.init_contrast = 0xffff;
-		init_items.init_flicker = 0xffff;
-		init_items.init_hdr_mode = 0xffff;
-		init_items.init_mirrorflip = 0xffff;
-		init_items.init_saturation = 0xffff;
-		init_items.init_wdr_level = 0xffff;
-		init_items.init_wdr_mode = 0xffff;
+		init_items.init_brightness = 0x00;
+		init_items.init_contrast = 0x50;
+		init_items.init_flicker = 0x01;
+		init_items.init_hdr_mode = 0x0;
+		init_items.init_mirrorflip = 0xf0;
+		init_items.init_saturation = 050;
+		init_items.init_wdr_level = 0x50;
+		init_items.init_wdr_mode = 0x02;
+		init_items.init_mipi_mode = 0x0;
 		hal_video_set_isp_init_items(ch, &init_items);
 	}
 
@@ -1268,21 +1326,7 @@ void video_pre_init_procedure(int ch, video_pre_init_params_t *parm)
 	}
 
 	if (parm->meta_enable) {
-		int meta_size = parm->meta_size + sizeof(isp_meta_t) + sizeof(isp_statis_meta_t);
-		meta_size = meta_size + meta_size / 4; //Add the extra buffer to dummy bytes
-		if (meta_size % 32) { //align 32 byte
-			meta_size = meta_size + (32 - (meta_size % 32));
-		}
-		parm->video_meta_offset = meta_size / 0xff;
-		parm->video_meta_total_size = meta_size;
-		//v_adp->cmd[ch]->userData = meta_size;
-		hal_video_isp_set_isp_meta_out(ch, 1);
-		if (v_adp->cmd[ch]->userData > VIDEO_META_REV_BUF) {
-			video_dprintf(VIDEO_LOG_ERR, "Meta size %d is exceed the sei buffer %d\r\n", meta_size, VIDEO_META_REV_BUF);
-			parm->video_meta_total_size = VIDEO_META_REV_BUF;
-			//v_adp->cmd[ch]->userData = VIDEO_META_REV_BUF;
-			video_dprintf(VIDEO_LOG_ERR, "Setup the meta size as %d\r\n", VIDEO_META_REV_BUF);
-		}
+		video_calcu_meta_size(parm);
 	}
 	if (parm->voe_dbg_disable) {
 		v_adp->cmd[0]->voe_dbg = 0;
@@ -1320,6 +1364,21 @@ int video_open_status(void)//0:No video open 1:video open
 	return status;
 }
 
+int video_check_fcs(int stream_id)
+{
+	int i = 0;
+	int ret = 0;
+	for (i = 0; i < 4; i++) {
+		if (isp_boot->video_params[i].stream_id == stream_id) {
+			if (isp_boot->video_params[i].fcs) {
+				ret = 1;
+			}
+			break;
+		}
+	}
+	return ret;
+}
+
 int video_open(video_params_t *v_stream, output_callback_t output_cb, void *ctx)
 {
 	int ch = v_stream->stream_id;
@@ -1353,8 +1412,8 @@ int video_open(video_params_t *v_stream, output_callback_t output_cb, void *ctx)
 
 	int out_rsvd_size = (enc_in_w * enc_in_h) / VIDEO_RSVD_DIVISION;
 	int out_buf_size = 0;
-	int jpeg_out_buf_size = out_rsvd_size * 3;
-	int jpeg_out_rsvd_size = out_rsvd_size;
+	int jpeg_out_buf_size = (enc_in_w * enc_in_h * 3) / 2; //jpeg max size = NV12 size
+	int jpeg_out_rsvd_size = jpeg_out_buf_size; //set buf_size==rsvd_size to disable ring buffer
 	unsigned char *cal_iq_addr;
 	struct isp_iq_cali *piq_cali_data;
 	int status = OK;
@@ -1369,11 +1428,6 @@ int video_open(video_params_t *v_stream, output_callback_t output_cb, void *ctx)
 	case 2:
 		out_buf_size = (v_stream->bps * V3_ENC_BUF_SIZE) / 8 + out_rsvd_size;
 		break;
-	}
-
-	if (v_stream->out_mode == MODE_EXT) {
-		jpeg_out_buf_size = enc_in_w * enc_in_h * 3 / 2;
-		jpeg_out_rsvd_size = jpeg_out_buf_size;  //set buf_size==rsvd_size to disable ring buffer
 	}
 
 	type = v_stream->type;
@@ -1437,9 +1491,7 @@ int video_open(video_params_t *v_stream, output_callback_t output_cb, void *ctx)
 		jpeg_qlevel = v_stream->jpeg_qlevel;
 	}
 
-
-	//if (fcs_v) {
-	if (isp_boot->fcs_status == 1 && isp_boot->fcs_setting_done == 0 && isp_boot->video_params[ch].fcs == 1) {
+	if (isp_boot->fcs_status == 1 && isp_boot->fcs_setting_done == 0 && video_check_fcs(v_stream->stream_id) == 1) {
 		hal_video_set_fps(isp_boot->video_params[ch].fps, ch); // for count the enc offset of the fcs channel
 		if (hal_video_out_cb(output_cb, 4096, (uint32_t)ctx, ch) != OK) {
 			video_dprintf(VIDEO_LOG_ERR, "hal_video_cb_register fail\n");
@@ -1451,15 +1503,21 @@ int video_open(video_params_t *v_stream, output_callback_t output_cb, void *ctx)
 		count++;
 		video_dprintf(VIDEO_LOG_INF, "start fcs video\r\n");
 		if (codec & CODEC_H264) {
-			hal_video_out_mode(ch, TYPE_H264, 2);
+			hal_video_out_mode(ch, TYPE_H264, MODE_ENABLE);
+		} else if (codec & CODEC_NV12) {
+			hal_video_out_mode(ch, TYPE_NV12, MODE_ENABLE);
 		} else if (codec & CODEC_HEVC) {
-			hal_video_out_mode(ch, TYPE_HEVC, 2);
+			hal_video_out_mode(ch, TYPE_HEVC, MODE_ENABLE);
+		} else if (codec & CODEC_RGB) {
+			hal_video_out_mode(ch, TYPE_RGB, MODE_ENABLE);
 		}
 		hal_video_fcs_ch(count);
 		if (count == isp_boot->fcs_channel) {
 			isp_boot->fcs_setting_done = 1;
 			video_dprintf(VIDEO_LOG_MSG, "The fcs setup is finished\r\n");
 		}
+		//record video parameter
+		memcpy(&voe_info.video_info[ch], v_stream, sizeof(video_params_t));
 		voe_info.stream_is_open[ch] = 1;
 
 		if (voe_info_init == 0) {
@@ -1472,7 +1530,7 @@ int video_open(video_params_t *v_stream, output_callback_t output_cb, void *ctx)
 			video_time_info_t video_time;
 			hal_video_time_info(1, &video_time);
 			isp_info.frame_done_time = isp_boot->fcs_voe_time + video_time.frame_done / 1000;
-			video_dprintf(VIDEO_LOG_MSG, " fcs_start_time %d fcs_voe_time %d frame_done_time\r\n", isp_boot->fcs_start_time, isp_boot->fcs_voe_time,
+			video_dprintf(VIDEO_LOG_MSG, " fcs_start_time %d fcs_voe_time %d frame_done_time %d\r\n", isp_boot->fcs_start_time, isp_boot->fcs_voe_time,
 						  isp_info.frame_done_time);
 			hal_video_print(0);
 		}
@@ -1640,16 +1698,52 @@ int video_open(video_params_t *v_stream, output_callback_t output_cb, void *ctx)
 		}
 	}
 
+	if (video_open_status() == 0) {
+		voe_info.voe_mcrop_enable = 0;
+	}
+
 	if (v_stream->use_roi == 1) {
 		video_dprintf(VIDEO_LOG_INF, "set v%d roi \r\n", ch);
 		int roi_w = v_stream->roi.xmax - v_stream->roi.xmin;
 		int roi_h = v_stream->roi.ymax - v_stream->roi.ymin;
-		if (roi_w < enc_in_w || roi_h < enc_in_h) {
+		int ch0_mcrop_config = 0;
+		if (v_stream->middle_crop_en) {
+			if ((ch == 0) && (video_open_status() == 0)) {
+				if ((enc_in_w >= roi_w * 2) || (enc_in_h >= roi_h * 2)) {
+					video_dprintf(VIDEO_LOG_ERR, "error: Encoder width and height should both be less than roi_w/h multi two.\r\n");
+					status = NOK;
+					goto EXIT;
+				} else if ((enc_in_w < roi_w) || (enc_in_h < roi_h)) {
+					video_dprintf(VIDEO_LOG_ERR, "error: It don't support the scale down\r\n");
+					status = NOK;
+					goto EXIT;
+				} else {
+					voe_info.voe_mcrop_enable = 1;
+					hal_video_isp_clk_set(ch, 5, 0);
+				}
+			} else {
+				if (ch != 0) {
+					video_dprintf(VIDEO_LOG_ERR, "It don't support to setup the mcrop that it only support ch0\r\n");
+					status = NOK;
+					goto EXIT;
+				} else {
+					ch0_mcrop_config = 1;
+				}
+			}
+		} else if (voe_info.voe_mcrop_enable) {
+			video_dprintf(VIDEO_LOG_ERR, "It don't support to setup the ROI when the mcrop is enable\r\n");
+			status = NOK;
+			goto EXIT;
+		} else if ((roi_w < enc_in_w) || (roi_h < enc_in_h)) {
 			video_dprintf(VIDEO_LOG_ERR, "roi size should be larger than encode size\r\n");
 			status = NOK;
 			goto EXIT;
 		}
-		hal_video_isp_set_roi(ch, v_stream->roi.xmin, v_stream->roi.ymin, roi_w, roi_h);
+		if (ch0_mcrop_config) {
+			video_dprintf(VIDEO_LOG_INF, "It don't need to setup again\r\n");
+		} else {
+			hal_video_isp_set_roi(ch, v_stream->roi.xmin, v_stream->roi.ymin, roi_w, roi_h);
+		}
 	}
 
 	if ((codec & (CODEC_HEVC | CODEC_H264)) != 0) {
@@ -1707,17 +1801,39 @@ int video_open(video_params_t *v_stream, output_callback_t output_cb, void *ctx)
 	}
 	if (isp_boot->fcs_status == 1) {
 		if (v_stream->meta_enable == 1 && isp_boot->meta_enable == 1) {
-			v_adp->cmd[ch]->userData = isp_boot->fcs_meta_total_size;
+			v_adp->cmd[ch]->EncuserData = isp_boot->fcs_meta_total_size;
+			if (isp_boot->extra_fcs_meta_enable_extend == 1) {
+				v_adp->cmd[ch]->IDRuserData = isp_boot->extra_fcs_meta_extend_total_size;
+			} else {
+				v_adp->cmd[ch]->IDRuserData = isp_boot->fcs_meta_total_size;
+			}
 			hal_video_isp_set_isp_meta_out(ch, 1);
+			if (codec & (CODEC_HEVC | CODEC_H264)) {
+				v_adp->cmd[ch]->IDRuserDataDuration = 1;
+			}
 		} else {
-			v_adp->cmd[ch]->userData = 0;
+			v_adp->cmd[ch]->EncuserData = 0;
 		}
 	} else {
 		if (v_stream->meta_enable == 1 && video_pre_init_param.meta_enable == 1) {
-			v_adp->cmd[ch]->userData = video_pre_init_param.video_meta_total_size;;
+			if (codec & (CODEC_HEVC | CODEC_H264)) {
+				v_adp->cmd[ch]->EncuserData = video_pre_init_param.video_meta_total_size;
+				if (video_pre_init_param.meta_enable_extend) {
+					v_adp->cmd[ch]->IDRuserData = video_pre_init_param.video_meta_extend_total_size;
+				} else {
+					v_adp->cmd[ch]->IDRuserData = video_pre_init_param.video_meta_total_size;
+				}
+				v_adp->cmd[ch]->IDRuserDataDuration = 1;
+
+				video_dprintf(VIDEO_LOG_INF, "EncuserData %d IDRuserData %d IDRuserDataDuration %d\r\n", v_adp->cmd[ch]->EncuserData, v_adp->cmd[ch]->IDRuserData,
+							  v_adp->cmd[ch]->IDRuserDataDuration);
+			}
+			if (codec & CODEC_JPEG) {
+				v_adp->cmd[ch]->JPGuserData = video_pre_init_param.video_meta_total_size;
+			}
 			hal_video_isp_set_isp_meta_out(ch, 1);
 		} else {
-			v_adp->cmd[ch]->userData = 0;
+			v_adp->cmd[ch]->EncuserData = 0;
 		}
 	}
 	if ((codec & CODEC_JPEG) && v_stream->jpeg_crop_parm.enable) {
@@ -1748,6 +1864,8 @@ int video_open(video_params_t *v_stream, output_callback_t output_cb, void *ctx)
 		memset(voe_info.stream_is_open, 0, sizeof(uint32_t)*MAX_CHANNEL);
 		voe_info_init = 1;
 	}
+	//record video parameter
+	memcpy(&voe_info.video_info[ch], v_stream, sizeof(video_params_t));
 	voe_info.stream_is_open[ch] = 1;
 	video_get_voe_version();
 #if FASTOSD_EN
@@ -1940,9 +2058,17 @@ hal_video_adapter_t *video_init(int iq_start_addr, int sensor_start_addr)
 			voe_fw_reload = 0;
 		}
 
+		if (!voe_info.voe_heap_addr) {
+			voe_info.voe_heap_addr = (uint32_t)malloc(voe_info.voe_heap_size);
+			video_dprintf(VIDEO_LOG_MSG, "voe_heap malloc 0x%x, size %d\n", voe_info.voe_heap_addr, voe_info.voe_heap_size);
+			if (!voe_info.voe_heap_addr) {
+				video_dprintf(VIDEO_LOG_ERR, "voe_heap malloc fail\n");
+				return NULL;
+			}
+		}
+
 		video_init_peri();
 
-		voe_info.voe_heap_addr = (uint32_t)malloc(voe_info.voe_heap_size);
 		video_clean_invalidate_heap((uint32_t *)voe_info.voe_heap_addr, voe_info.voe_heap_size);
 		res = hal_video_init((uint32_t *)voe_info.voe_heap_addr, voe_info.voe_heap_size);
 		if (res != OK) {
@@ -1953,7 +2079,7 @@ hal_video_adapter_t *video_init(int iq_start_addr, int sensor_start_addr)
 		video_dprintf(VIDEO_LOG_INF, "!hal_voe_ready\r\n");
 
 	}
-	if (isp_boot->fcs_status == 1 && isp_boot->fcs_setting_done == 0) {
+	if (isp_boot->fcs_status == 1 && video_open_status() == 0) {
 		unsigned char *sensor_addr = NULL;
 		unsigned char *iq_addr = NULL;
 		sensor_addr = video_load_sensor(sensor_start_addr);
@@ -1980,10 +2106,6 @@ hal_video_adapter_t *video_init(int iq_start_addr, int sensor_start_addr)
 void *video_deinit(void)
 {
 	if (hal_voe_ready() == OK) {
-		if ((void *)(voe_info.voe_heap_addr) != NULL) {
-			video_buf_release();
-		}
-
 		video_deinit_peri();
 
 		video_dprintf(VIDEO_LOG_INF, "video_deinit\r\n");
@@ -2470,6 +2592,7 @@ int video_get_voe_version()
 void video_get_version()
 {
 	char version[] = {0xff, 0xff, 0xff, 0xff};
+	video_get_voe_version();
 
 	version[0] = voe_ver[13] - 48;
 	version[1] = voe_ver[15] - 48;
@@ -2565,9 +2688,9 @@ static void isp_set_dn_initial_mode(int ch, int mode) //0 day mode 1 night mode
 	|    SP mode   |   2   |     2     |  Yes   |
 	---------------------------------------------
 	init_iq_mode.
-	0 – disable these initial iq parameters setting
-	1 – Valid with stream open after all streams closed.
-	2 – Only valid 1st steam open after voe turn on
+	0 - disable these initial iq parameters setting
+	1 - Valid with stream open after all streams closed.
+	2 - Only valid 1st steam open after voe turn on
 	*/
 	if (isp_boot->fcs_status && isp_boot->fcs_setting_done == 0) {
 		video_dprintf(VIDEO_LOG_ERR, "It is fcs mode, don't support\r\n");
@@ -2836,7 +2959,7 @@ EXIT:
 	return -1;
 }
 #endif
-void video_set_private_mask(int ch, struct private_mask_s *pmask)
+int video_set_private_mask(int ch, struct private_mask_s *pmask)
 {
 	hal_video_reset_mask_status();
 	uint32_t *en = pmask->en;
@@ -2845,24 +2968,24 @@ void video_set_private_mask(int ch, struct private_mask_s *pmask)
 	}
 	for (int id = 0 ; id < MASK_MAX_NUM; id++) {
 		if (id == MASK_GRID) { //GRID MODE
-			isp_grid_t grid;
-			printf("[GRID Mode]:\r\n");
+			isp_grid_t grid = {0};
+			video_dprintf(VIDEO_LOG_MSG, "[GRID Mode]: %s\r\n", (en[id] > 0 ? "used" : "unused"));
 			if (pmask->start_x[id] % 2) {
-				printf("[%s] invalid value pmask->start_x=%d", __FUNCTION__, pmask->start_x);
+				video_dprintf(VIDEO_LOG_MSG, "[%s] invalid value pmask->start_x=%u.\r\n", __FUNCTION__, pmask->start_x);
 				continue;
 			}
 			if (pmask->start_y[id] % 2) {
-				printf("[%s] invalid value pmask->start_y=%d", __FUNCTION__, pmask->start_y);
+				video_dprintf(VIDEO_LOG_MSG, "[%s] invalid value pmask->start_y=%u.\r\n", __FUNCTION__, pmask->start_y);
 				continue;
 			}
 			if (pmask->cols % 8) {
-				printf("[%s] invalid value pmask->cols=%d", __FUNCTION__, pmask->cols);
+				video_dprintf(VIDEO_LOG_MSG, "[%s] invalid value pmask->cols=%u.\r\n", __FUNCTION__, pmask->cols);
 				continue;
 			}
 			if (pmask->w[id] % 16) {
-				int cell_w = pmask->w[id] / pmask->cols;
+				unsigned int cell_w = pmask->w[id] / pmask->cols;
 				if (cell_w % 2) {
-					printf("[%s] invalid value cell_w=%d", __FUNCTION__, cell_w);
+					video_dprintf(VIDEO_LOG_MSG, "[%s] invalid value cell_w=%u.\r\n", __FUNCTION__, cell_w);
 					continue;
 				}
 			}
@@ -2878,13 +3001,13 @@ void video_set_private_mask(int ch, struct private_mask_s *pmask)
 			hal_video_config_grid_mask(pmask->en[id], grid, (uint8_t *)pmask->bitmap);
 		} else { //RECT MODE
 			isp_rect_t rect;
-			printf("[RECT Mode]:\r\n");
+			video_dprintf(VIDEO_LOG_MSG, "[RECT Mode]: %s\r\n", (en[id] > 0 ? "used" : "unused"));
 			if (pmask->start_x[id] % 2) {
-				printf("[%s] invalid value pmask->start_x=%d", __FUNCTION__, pmask->start_x);
+				video_dprintf(VIDEO_LOG_MSG, "[%s] invalid value pmask->start_x=%u.\r\n", __FUNCTION__, pmask->start_x);
 				continue;
 			}
 			if (pmask->start_y[id] % 2) {
-				printf("[%s] invalid value pmask->start_y=%d", __FUNCTION__, pmask->start_y);
+				video_dprintf(VIDEO_LOG_MSG, "[%s] invalid value pmask->start_y=%u.\r\n", __FUNCTION__, pmask->start_y);
 				continue;
 			}
 			rect.left = pmask->start_x[id];
@@ -2901,40 +3024,40 @@ void video_set_private_mask(int ch, struct private_mask_s *pmask)
 			break;
 		}
 	}
-	hal_video_set_mask(ch, is_video_not_open);
+	return hal_video_set_mask(ch, is_video_not_open);
 }
 void video_set_private_mask_single(int ch, private_mask_single_t *pmask)
 {
-	printf("enable: %d, id: %d\r\nstart_x: %d, start_y: %d\r\ncols: %d, rows: %d\r\nw: %d, h: %d\r\n"
-		   , pmask->en, pmask->id, pmask->start_x, pmask->start_y, pmask->cols, pmask->rows, pmask->w, pmask->h);
+	video_dprintf(VIDEO_LOG_MSG, "enable: %d, id: %d\r\nstart_x: %d, start_y: %d\r\ncols: %d, rows: %d\r\nw: %d, h: %d\r\n"
+				  , pmask->en, pmask->id, pmask->start_x, pmask->start_y, pmask->cols, pmask->rows, pmask->w, pmask->h);
 	if (pmask->en < 0 || pmask->en > 1) {
-		video_dprintf(VIDEO_LOG_INF, "[%s] invalid value pmask->en=%d", __FUNCTION__, pmask->en);
+		video_dprintf(VIDEO_LOG_MSG, "[%s] invalid value pmask->en=%d", __FUNCTION__, pmask->en);
 		return;
 	}
 	if (pmask->grid_mode < 0 || pmask->grid_mode > 1) {
-		video_dprintf(VIDEO_LOG_INF, "[%s] invalid value pmask->grid_mode=%d", __FUNCTION__, pmask->grid_mode);
+		video_dprintf(VIDEO_LOG_MSG, "[%s] invalid value pmask->grid_mode=%d", __FUNCTION__, pmask->grid_mode);
 		return;
 	}
 	if (pmask->id < 0 || pmask->id > 3) {
-		video_dprintf(VIDEO_LOG_INF, "[%s] invalid value pmask->id=%d", __FUNCTION__, pmask->id);
+		video_dprintf(VIDEO_LOG_MSG, "[%s] invalid value pmask->id=%d", __FUNCTION__, pmask->id);
 		return;
 	}
 	if (pmask->start_x % 2) {
-		video_dprintf(VIDEO_LOG_INF, "[%s] invalid value pmask->start_x=%d", __FUNCTION__, pmask->start_x);
+		video_dprintf(VIDEO_LOG_MSG, "[%s] invalid value pmask->start_x=%d", __FUNCTION__, pmask->start_x);
 		return;
 	}
 	if (pmask->start_y % 2) {
-		video_dprintf(VIDEO_LOG_INF, "[%s] invalid value pmask->start_y=%d", __FUNCTION__, pmask->start_y);
+		video_dprintf(VIDEO_LOG_MSG, "[%s] invalid value pmask->start_y=%d", __FUNCTION__, pmask->start_y);
 		return;
 	}
 	if (pmask->grid_mode == 1 && pmask->cols % 8) {
-		video_dprintf(VIDEO_LOG_INF, "[%s] invalid value pmask->cols=%d", __FUNCTION__, pmask->cols);
+		video_dprintf(VIDEO_LOG_MSG, "[%s] invalid value pmask->cols=%d", __FUNCTION__, pmask->cols);
 		return;
 	}
 	if (pmask->grid_mode == 1 && pmask->w % 16) {
 		int cell_w = pmask->w / pmask->cols;
 		if (cell_w % 2) {
-			video_dprintf(VIDEO_LOG_INF, "[%s] invalid value cell_w=%d", __FUNCTION__, cell_w);
+			video_dprintf(VIDEO_LOG_MSG, "[%s] invalid value cell_w=%d", __FUNCTION__, cell_w);
 			return;
 		}
 	}
@@ -2945,7 +3068,7 @@ void video_set_private_mask_single(int ch, private_mask_single_t *pmask)
 
 
 	if (pmask->grid_mode) {
-		video_dprintf(VIDEO_LOG_INF, "[GRID Mode]:\r\n");
+		video_dprintf(VIDEO_LOG_MSG, "[GRID Mode]:\r\n");
 		isp_grid_t grid;
 		grid.start_x = pmask->start_x;
 		grid.start_y = pmask->start_y;
@@ -2955,7 +3078,7 @@ void video_set_private_mask_single(int ch, private_mask_single_t *pmask)
 		grid.cell_h = pmask->h / grid.rows;
 		hal_video_config_grid_mask(pmask->en, grid, (uint8_t *)pmask->bitmap);
 	} else {
-		video_dprintf(VIDEO_LOG_INF, "[RECT Mode]:\r\n");
+		video_dprintf(VIDEO_LOG_MSG, "[RECT Mode]:\r\n");
 		isp_rect_t rect;
 		rect.left = pmask->start_x;
 		rect.top  = pmask->start_y;
@@ -3043,9 +3166,11 @@ uint32_t video_get_system_ts_from_isp_ts(uint32_t cur_system_ts, uint32_t cur_is
 	uint32_t cur_video_ts_ms;
 	cur_video_ts_ms = (cur_video_ts_us + 500) / 1000;
 
-	// Intialize the offset between video and audio in the first time
-	if (isp_ts_initialed_flag[channel] == 0) {
+	diff_system_ts_ms = cur_system_ts_ms - last_system_ts_ms[channel];
+	// Intialize the offset between video and audio in the first time or the video pause time >= max time
+	if (isp_ts_initialed_flag[channel] == 0 || diff_system_ts_ms >= (UINT32_MAX / 1000 - UINT32_MAX / 1000 / 125)) {
 		isp_ts_initialed_flag[channel] = 1;
+		isp_overflow_times[channel] = 0;
 		offset_ms[channel] = cur_system_ts_ms - cur_video_ts_ms;
 		last_video_ts_ms[channel] = cur_video_ts_ms;
 		last_system_ts_ms[channel] = cur_system_ts_ms;
@@ -3060,7 +3185,6 @@ uint32_t video_get_system_ts_from_isp_ts(uint32_t cur_system_ts, uint32_t cur_is
 		goto count_ts;
 	}
 	diff_video_ts_ms = cur_video_ts_ms - last_video_ts_ms[channel];
-	diff_system_ts_ms = cur_system_ts_ms - last_system_ts_ms[channel];
 
 	// Check every 1 sec
 	if (diff_system_ts_ms < 1000) {
@@ -3151,17 +3275,11 @@ static int video_check_sei_dummy_bytes(video_meta_t *m_parm, unsigned int length
 	return dummy_bytes_length;
 }
 
-static void video_insert_sei_dummy_three_bytes(unsigned char *video_output, unsigned int length, unsigned int extra_dummy_byte)
+static void video_insert_sei_dummy_three_bytes(unsigned char *video_output, unsigned int length, unsigned int extra_dummy_byte, unsigned int meta_length)
 {
 	int outputAmount = 0;
 	int zeroCount = 0;
 	int value = 0;
-	int meta_length = 0;
-	if (isp_boot->fcs_status) {
-		meta_length = isp_boot->fcs_meta_total_size;
-	} else {
-		meta_length = video_pre_init_param.video_meta_total_size;
-	}
 
 	for (int i = 0; i < length; i++) {
 		value = video_sei_buf[i];
@@ -3219,34 +3337,79 @@ Layout [UUID-16][ISP_STATIS_META][ISP_META_DATA]
 T-REC-H.265
 Since the payload size of an SEI message is specified in RBSP bytes, the quantity of emulation prevention bytes is not included in the size payloadSize of an SEI payload.
 */
-void video_sei_write(video_meta_t *m_parm)
+#include "isp_ctrl_api.h"
+#include "isp_api.h"
+int video_meta_copy_info(video_meta_t *m_parm)
 {
-	int length = sizeof(isp_statis_meta_t) + sizeof(isp_meta_t) + VIDEO_META_UUID_SIZE;
-	int meta_length = 0;
-	unsigned char *video_output = NULL;
-	if (m_parm->type == AV_CODEC_ID_MJPEG) {
-		video_output = (unsigned char *)(m_parm->video_addr) + m_parm->meta_offset + VIDEO_JPEG_META_OFFSET;
-	} else if (m_parm->type == AV_CODEC_ID_H264) {
-		video_output = (unsigned char *)(m_parm->video_addr) + m_parm->meta_offset + VIDEO_H264_META_OFFSET + video_get_meta_offset();
-	} else if (m_parm->type == AV_CODEC_ID_H265) {
-		video_output = (unsigned char *)(m_parm->video_addr) + m_parm->meta_offset + VIDEO_HEVC_META_OFFSET + video_get_meta_offset();
-	} else {
-		video_dprintf(VIDEO_LOG_MSG, "It don't support type %d\r\n", m_parm->type);
-		return;
-	}
+	int isp_3a_enable = 0;
+	int length = 0;
+	int ret = 0;
+	unsigned char tag[VIDEO_META_3A_TAG_SIZE] = {0x33, 0x41, 0X44, 0X45};//"3ADB"
 
 	if (isp_boot->fcs_status) {
-		meta_length = isp_boot->fcs_meta_total_size;
+		if (m_parm->meta_size > isp_boot->fcs_meta_total_size) {
+			isp_3a_enable = 1;
+		}
 	} else {
-		meta_length = video_pre_init_param.video_meta_total_size;
+		if (m_parm->meta_size > video_pre_init_param.video_meta_total_size) {
+			isp_3a_enable = 1;
+		}
+	}
+	if (isp_3a_enable) {
+		length =  sizeof(isp_statis_meta_t) + sizeof(isp_meta_t) + sizeof(af_statis_t) + sizeof(ae_statis_t) + sizeof(awb_statis_t) + VIDEO_META_UUID_SIZE + sizeof(
+					  tag);
+		ret = isp_get_AF_statis(&af_result);
+		ret = isp_get_AE_statis(&ae_result);
+		ret = isp_get_AWB_statis(&awb_result);
+	} else {
+		length = sizeof(isp_statis_meta_t) + sizeof(isp_meta_t) + VIDEO_META_UUID_SIZE;
+	}
+
+	if (length > VIDEO_META_REV_BUF) {
+		video_dprintf(VIDEO_LOG_MSG, "The length %d bigger than reserved %d size\r\n", length, VIDEO_META_REV_BUF);
+		return -1;
 	}
 
 	memcpy(video_sei_buf, video_pre_init_param.video_meta_uuid, VIDEO_META_UUID_SIZE);
 	memcpy(video_sei_buf + VIDEO_META_UUID_SIZE, m_parm->isp_statis_meta, sizeof(isp_statis_meta_t));
 	memcpy(video_sei_buf + VIDEO_META_UUID_SIZE + sizeof(isp_statis_meta_t), m_parm->isp_meta_data, sizeof(isp_meta_t));
+	if (isp_3a_enable) {
+		memcpy(video_sei_buf + VIDEO_META_UUID_SIZE + sizeof(isp_statis_meta_t) + sizeof(isp_meta_t), tag, sizeof(tag));
+		memcpy(video_sei_buf + VIDEO_META_UUID_SIZE + sizeof(tag) + sizeof(isp_statis_meta_t) + sizeof(isp_meta_t), (unsigned char *)&af_result,
+			   sizeof(af_result));
+		memcpy(video_sei_buf + VIDEO_META_UUID_SIZE + sizeof(tag) + sizeof(isp_statis_meta_t) + sizeof(isp_meta_t) + sizeof(af_result),
+			   (unsigned char *)&ae_result, sizeof(ae_result));
+		memcpy(video_sei_buf + VIDEO_META_UUID_SIZE + sizeof(tag) + sizeof(isp_statis_meta_t) + sizeof(isp_meta_t) + sizeof(af_result) + sizeof(ae_result),
+			   (unsigned char *)&awb_result, sizeof(awb_result));
+	}
 	if (m_parm->user_buf != NULL) {
-		memcpy(video_sei_buf + sizeof(isp_statis_meta_t) + sizeof(isp_meta_t) + VIDEO_META_UUID_SIZE, m_parm->user_buf, m_parm->user_buf_len);
+		memcpy(video_sei_buf + length, m_parm->user_buf, m_parm->user_buf_len);
 		length += m_parm->user_buf_len;
+	}
+	return length;
+}
+void video_sei_write(video_meta_t *m_parm)
+{
+	int length = 0;
+	int meta_length = m_parm->meta_size;
+	unsigned char *video_output = NULL;
+
+	if (m_parm->type == AV_CODEC_ID_MJPEG) {
+		video_output = (unsigned char *)(m_parm->video_addr) + m_parm->meta_offset + VIDEO_JPEG_META_OFFSET;
+	} else if (m_parm->type == AV_CODEC_ID_H264) {
+		video_output = (unsigned char *)(m_parm->video_addr) + m_parm->meta_offset + VIDEO_H264_META_OFFSET + video_get_meta_offset(meta_length);
+	} else if (m_parm->type == AV_CODEC_ID_H265) {
+		video_output = (unsigned char *)(m_parm->video_addr) + m_parm->meta_offset + VIDEO_HEVC_META_OFFSET + video_get_meta_offset(meta_length);
+	} else {
+		video_dprintf(VIDEO_LOG_MSG, "It don't support type %d\r\n", m_parm->type);
+		return;
+	}
+
+	length = video_meta_copy_info(m_parm);
+
+	if (length < 0) {
+		video_dprintf(VIDEO_LOG_MSG, "The length %d bigger than reserved %d size\r\n", length, VIDEO_META_REV_BUF);
+		return;
 	}
 
 	if (m_parm->type == AV_CODEC_ID_MJPEG) {
@@ -3283,23 +3446,36 @@ void video_sei_write(video_meta_t *m_parm)
 		} else {
 			video_output = (unsigned char *)(m_parm->video_addr) + m_parm->meta_offset + VIDEO_HEVC_META_OFFSET + (enc_size_interval - 1);
 		}
-		video_insert_sei_dummy_three_bytes(video_output, length, dummp_byte_enable);
+		video_insert_sei_dummy_three_bytes(video_output, length, dummp_byte_enable, meta_length);
 	}
 }
 
-void video_sei_read(unsigned char *uuid, unsigned char *video_input, isp_statis_meta_t *isp_statis_meta, isp_meta_t *isp_meta_data, unsigned char *user_input,
-					int user_length)
+void video_sei_read(video_meta_read_t *meta_read, unsigned char *video_input, video_meta_t *m_parm)
 {
 	int outputAmount = 0;
 	int zeroCount = 0;
 	int value = 0;
-	int meta_store_size = video_pre_init_param.meta_size + sizeof(isp_meta_t) + sizeof(isp_statis_meta_t) + VIDEO_META_UUID_SIZE;
-	int meta_length = 0;
+	int meta_store_size = 0;
+	int meta_length = m_parm->meta_size;
+
+	int isp_3a_enable = 0;
+
 	if (isp_boot->fcs_status) {
-		meta_length = isp_boot->fcs_meta_total_size;
+		if (m_parm->meta_size > isp_boot->fcs_meta_total_size) {
+			isp_3a_enable = 1;
+		}
 	} else {
-		meta_length = video_pre_init_param.video_meta_total_size;
+		if (m_parm->meta_size > video_pre_init_param.video_meta_total_size) {
+			isp_3a_enable = 1;
+		}
 	}
+	if (isp_3a_enable) {
+		meta_store_size =  sizeof(isp_statis_meta_t) + sizeof(isp_meta_t) + sizeof(af_statis_t) + sizeof(ae_statis_t) + sizeof(
+							   awb_statis_t) + VIDEO_META_UUID_SIZE + VIDEO_META_3A_TAG_SIZE + meta_read->user_length;
+	} else {
+		meta_store_size = sizeof(isp_statis_meta_t) + sizeof(isp_meta_t) + VIDEO_META_UUID_SIZE + meta_read->user_length;
+	}
+
 	for (int i = 0; i < meta_length; i++) {
 		value = video_input[i];
 		if (zeroCount == 2 && value == VIDEO_START_CODE_DUMMY) {
@@ -3317,20 +3493,41 @@ void video_sei_read(unsigned char *uuid, unsigned char *video_input, isp_statis_
 			break;
 		}
 	}
-	memcpy(uuid, video_sei_buf, VIDEO_META_UUID_SIZE);
-	memcpy(isp_statis_meta, video_sei_buf + VIDEO_META_UUID_SIZE, sizeof(isp_statis_meta_t));
-	memcpy(isp_meta_data, video_sei_buf + VIDEO_META_UUID_SIZE + sizeof(isp_statis_meta_t), sizeof(isp_meta_t));
-	if (user_input) {
-		memcpy(user_input, video_sei_buf + VIDEO_META_UUID_SIZE + sizeof(isp_statis_meta_t) + sizeof(isp_meta_t), user_length);
+	memcpy(meta_read->uuid, video_sei_buf, VIDEO_META_UUID_SIZE);
+	memcpy(&meta_read->isp_statis_meta, video_sei_buf + VIDEO_META_UUID_SIZE, sizeof(isp_statis_meta_t));
+	memcpy(&meta_read->isp_meta_data, video_sei_buf + VIDEO_META_UUID_SIZE + sizeof(isp_statis_meta_t), sizeof(isp_meta_t));
+
+	if (isp_3a_enable) {
+		memcpy(meta_read->magic_num, video_sei_buf + VIDEO_META_UUID_SIZE + sizeof(isp_statis_meta_t) + sizeof(isp_meta_t), VIDEO_META_3A_TAG_SIZE);
+
+		memcpy(&meta_read->af_result, video_sei_buf + VIDEO_META_UUID_SIZE + sizeof(isp_statis_meta_t) + sizeof(isp_meta_t) + VIDEO_META_3A_TAG_SIZE,
+			   sizeof(af_statis_t));
+
+		memcpy(&meta_read->ae_result, video_sei_buf + VIDEO_META_UUID_SIZE + sizeof(isp_statis_meta_t) + sizeof(isp_meta_t) + VIDEO_META_3A_TAG_SIZE + sizeof(
+				   af_statis_t), sizeof(ae_statis_t));
+
+		memcpy(&meta_read->awb_result, video_sei_buf + VIDEO_META_UUID_SIZE + sizeof(isp_statis_meta_t) + sizeof(isp_meta_t) + VIDEO_META_3A_TAG_SIZE + sizeof(
+				   af_statis_t) + sizeof(ae_statis_t), sizeof(awb_statis_t));
+	}
+	if (meta_read->user_input && meta_read->user_length > 0) {
+		memcpy(meta_read->user_input, video_sei_buf + meta_store_size - meta_read->user_length, meta_read->user_length);
 	}
 }
 
-int video_get_meta_offset(void)
+int video_get_meta_offset(int meta_size)
 {
 	if (isp_boot->fcs_status) {
-		return isp_boot->fcs_meta_offset;
+		if (meta_size == isp_boot->fcs_meta_total_size) {
+			return isp_boot->fcs_meta_offset;
+		} else {
+			return isp_boot->extra_fcs_meta_extend_offset;
+		}
 	} else {
-		return video_pre_init_param.video_meta_offset;
+		if (meta_size == video_pre_init_param.video_meta_total_size) {
+			return video_pre_init_param.video_meta_offset;
+		} else {
+			return video_pre_init_param.video_meta_extend_offset;
+		}
 	}
 }
 

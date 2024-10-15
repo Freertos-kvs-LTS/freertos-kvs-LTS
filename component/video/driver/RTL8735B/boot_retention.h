@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-typedef struct retention_table_items_s {
+typedef struct retention_table_items_s{
 	uint32_t tag;
 	uint32_t data_len;
 	uint32_t address;

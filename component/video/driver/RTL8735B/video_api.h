@@ -45,7 +45,7 @@
 #define VIDEO_META_REV_BUF  0x1000
 #define VIDEO_START_CODE_DUMMY 0x03
 #define VIDEO_META_UUID_SIZE 0x10
-
+#define VIDEO_META_3A_TAG_SIZE 0x04
 #define NALU_PAYLOAD_MAX_SIZE 0X0A
 
 /*ENCODE TYPE*/
@@ -187,6 +187,10 @@ typedef struct video_pre_init_params_s {
 	uint32_t video_meta_offset;//the meta offset size
 	uint32_t video_meta_total_size;//the meta total size
 	uint8_t video_meta_uuid[VIDEO_META_UUID_SIZE];//
+	uint32_t video_meta_extend_offset;//the extend meta offset size
+	uint32_t video_meta_extend_total_size;//the extend meta total size
+	uint32_t meta_enable_extend;//Add the 3A info at I frame
+	uint32_t meta_gop_duration;//Setup times to the I frame by gop duration.
 } video_pre_init_params_t;
 
 typedef struct private_mask_single_s {
@@ -241,6 +245,7 @@ typedef struct video_param_s {
 	uint32_t vui_disable;//Disable the VUI feature that the sps/pps won't be changed.
 	uint32_t meta_enable;
 	jpeg_crop_parm_t jpeg_crop_parm;
+	uint32_t middle_crop_en;//Middle crop functio only support in ch0
 } video_params_t;
 
 typedef struct voe_info_s {
@@ -248,6 +253,7 @@ typedef struct voe_info_s {
 	uint32_t voe_heap_size;
 	video_params_t video_info[MAX_CHANNEL];
 	uint32_t stream_is_open[MAX_CHANNEL];
+	uint32_t voe_mcrop_enable;
 } voe_info_t;
 
 typedef struct mult_sensor_info_s {
@@ -260,22 +266,35 @@ typedef struct video_meta_s {
 	uint32_t video_addr;
 	uint32_t video_len;
 	uint32_t meta_offset;
+	uint32_t meta_size;
 	isp_meta_t *isp_meta_data;
 	isp_statis_meta_t *isp_statis_meta;
 	uint8_t  *user_buf;
 	uint32_t user_buf_len;
 } video_meta_t;
 
+typedef struct video_meta_read_s {
+	unsigned char uuid[VIDEO_META_UUID_SIZE];
+	isp_statis_meta_t isp_statis_meta;
+	isp_meta_t isp_meta_data;
+	unsigned char magic_num[VIDEO_META_3A_TAG_SIZE];
+	af_statis_t af_result;
+	ae_statis_t ae_result;
+	awb_statis_t awb_result;
+	unsigned char *user_input;
+	int user_length;
+} video_meta_read_t;
+
 typedef struct nalu_payload_info_s {
 	int offset;
 	int size;
 	int type;
 } nalu_payload_info_t;
+
 typedef struct video_encoder_nalu_paylaod_info_s {
 	nalu_payload_info_t nalu_info[NALU_PAYLOAD_MAX_SIZE];
 	int nalu_count;
 } video_encoder_nalu_payload_info_t;
-
 
 int video_ctrl(int ch, int cmd, int arg);
 
@@ -357,7 +376,7 @@ void video_get_fcs_queue_info(int *start_time, int *end_time);
 
 int video_get_maxqp(int ch);
 
-void video_set_private_mask(int ch, struct private_mask_s *pmask);
+int video_set_private_mask(int ch, struct private_mask_s *pmask);
 
 void video_set_private_mask_single(int ch, private_mask_single_t *pmask);
 
@@ -391,10 +410,9 @@ int video_pre_init_get_meta_enable(void);
 
 void video_sei_write(video_meta_t *m_parm);
 
-void video_sei_read(unsigned char *uuid, unsigned char *video_input, isp_statis_meta_t *isp_statis_meta, isp_meta_t *isp_meta_data, unsigned char *user_input,
-					int user_length);
+void video_sei_read(video_meta_read_t *meta_read, unsigned char *video_input, video_meta_t *m_parm);
 
-int video_get_meta_offset(void);
+int video_get_meta_offset(int meta_size);
 
 int video_open_status(void);//0:No video open 1:video open
 

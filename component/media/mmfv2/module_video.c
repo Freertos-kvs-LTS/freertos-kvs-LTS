@@ -73,7 +73,7 @@ static int ch_fps_cnt[CH_NUM]   = {0};
 static int cb_tick[CH_NUM]   = {0};
 static int ch_fps[CH_NUM]   = {0};
 static int ch_forcei[CH_NUM]   = {0};
-
+static int video_detect_sensor_id(void);
 void video_show_fps(int enable)
 {
 	show_fps = enable;
@@ -88,15 +88,14 @@ int video_get_cb_fps(int chn)
 }
 static int video_rate_control_check_fps(int fps)
 {
-	int isp_min_fps = 0;
 	int isp_max_fps = 0;
-	isp_get_min_fps(&isp_min_fps);
 	isp_get_max_fps(&isp_max_fps);
 	if (isp_max_fps > 0 && isp_max_fps < fps) {
 		return isp_max_fps;
 	}
-	if (isp_min_fps > 0 && isp_min_fps > fps) {
-		return isp_min_fps;
+	// Since the min fps of VOE is not related to the isp min fps, user only needs to prevent the fps is 0
+	if (fps <= 0) {
+		return 1;
 	}
 	return fps;
 }
@@ -198,20 +197,24 @@ void video_default_meta_cb(void *parm)
 void video_meta_data_process(video_ctx_t *ctx, enc2out_t *enc2out, uint32_t codec_type)
 {
 	uint32_t meta_offset = 0;
+	uint32_t meta_size = 0;
 	if (codec_type == AV_CODEC_ID_MJPEG) {
 		ctx->meta_data.video_addr = (uint32_t)enc2out->jpg_addr;
 		ctx->meta_data.video_len = enc2out->jpg_len;
 		meta_offset = enc2out->jpg_meta_offset;
+		meta_size = enc2out->jpg_meta_size;
 	} else if ((codec_type == AV_CODEC_ID_H264) || (codec_type == AV_CODEC_ID_H265)) {
 		ctx->meta_data.video_addr = (uint32_t)enc2out->enc_addr;
 		ctx->meta_data.video_len = enc2out->enc_len;
 		meta_offset = enc2out->enc_meta_offset;
+		meta_size = enc2out->enc_meta_size;
 	} else {
 		VIDEO_DBG_ERROR("meta data dont support type %d\r\n", codec_type);
 		return;
 	}
 	ctx->meta_data.type = codec_type;
 	ctx->meta_data.meta_offset = meta_offset;
+	ctx->meta_data.meta_size = meta_size;
 	ctx->meta_data.isp_meta_data = &(enc2out->isp_meta_data);
 	ctx->meta_data.isp_statis_meta = &(enc2out->statis_data);
 	if (ctx->meta_cb) {
@@ -649,6 +652,11 @@ int video_control(void *p, int cmd, int arg)
 		break;
 	case CMD_VIDEO_STREAM_STOP: {
 		int ch = ctx->params.stream_id;
+		if (video_get_stream_info(ch) == 0) {
+			VIDEO_DBG_ERROR("CH %d already close\r\n", ch);
+			return NOK;
+		}
+
 		while (incb[ch]) {
 			vTaskDelay(1);
 		}
@@ -660,7 +668,15 @@ int video_control(void *p, int cmd, int arg)
 		enc_queue_cnt[ch] = 0;
 		vTaskDelay(10);
 		ctx->rate_ctrl_p.rate_ctrl_en = 0;
-		return video_close(ch);
+
+		ret = video_close(ch);
+
+		//video deinit after all video close, takes 50ms
+		if (video_open_status() == 0) {
+			video_deinit();
+		}
+
+		return ret;
 	}
 	break;
 	case CMD_VIDEO_FORCE_IFRAME: {
@@ -767,10 +783,18 @@ int video_control(void *p, int cmd, int arg)
 	break;
 	case CMD_VIDEO_APPLY: {
 		int ch = arg;
-		int ret = 0;
 		ctx->params.stream_id = ch;
 		ctx->rate_ctrl_p.rate_ctrl_en = 0;
 
+		//video init before first vido open, take 78ms.
+		if (video_open_status() == 0) {
+			ctx->v_adp = video_init(ctx->iq_addr, ctx->sensor_addr);
+			VIDEO_DBG_INFO("ctx->v_adp = 0x%X\r\n", ctx->v_adp);
+			if (ctx->v_adp == NULL) {
+				VIDEO_DBG_ERROR("video_init fail\r\n");
+				return NOK;
+			}
+		}
 
 		if (sensor_id_value > 0 && sensor_id_value < SENSOR_MAX) {
 			video_fix_param(ctx, sensor_id_value);
@@ -946,8 +970,6 @@ static int video_detect_sensor_id(void)
 void *video_create(void *parent)
 {
 	video_ctx_t *ctx = malloc(sizeof(video_ctx_t));
-	int iq_addr = 0;
-	int sensor_addr = 0;
 	int ret = 0;
 	if (!ctx) {
 		return NULL;
@@ -959,7 +981,7 @@ void *video_create(void *parent)
 
 	if (voe_boot_fsc_status()) {
 		sensor_id_value = voe_boot_fsc_id();
-		voe_get_sensor_info(sensor_id_value, &iq_addr, &sensor_addr);
+		voe_get_sensor_info(sensor_id_value, &ctx->iq_addr, &ctx->sensor_addr);
 	} else {
 #if MULTI_SENSOR
 		int sensor_id = isp_get_id();
@@ -982,7 +1004,7 @@ void *video_create(void *parent)
 				sensor_id_value = ret;
 			}
 		}
-		voe_get_sensor_info(sensor_id_value, &iq_addr, &sensor_addr);
+		voe_get_sensor_info(sensor_id_value, &ctx->iq_addr, &ctx->sensor_addr);
 #else
 		if (!sensor_id_value) { //Use the default sensor, if the value equal to 0
 			if (sensor_id_value == 0) {
@@ -996,12 +1018,10 @@ void *video_create(void *parent)
 				sensor_id_value = ret;
 			}
 		}
-		voe_get_sensor_info(sensor_id_value, &iq_addr, &sensor_addr);
+		voe_get_sensor_info(sensor_id_value, &ctx->iq_addr, &ctx->sensor_addr);
 #endif
 	}
-	VIDEO_DBG_INFO("ID %x iq_addr %x sensor_addr %x\r\n", sensor_id_value, iq_addr, sensor_addr);
-	ctx->v_adp = video_init(iq_addr, sensor_addr);
-	VIDEO_DBG_INFO("ctx->v_adp = 0x%X\r\n", ctx->v_adp);
+	VIDEO_DBG_INFO("ID %x iq_addr %x sensor_addr %x\r\n", sensor_id_value, ctx->iq_addr, ctx->sensor_addr);
 
 	return ctx;
 }
@@ -1048,18 +1068,19 @@ void *video_voe_release_item(void *p, void *d, int length)
 
 	if (ctx->params.use_static_addr == 1) {
 		enc_queue_cnt[ch]--;
-		if (free_item->type == AV_CODEC_ID_H264 || free_item->type == AV_CODEC_ID_H265 || free_item->type == AV_CODEC_ID_MJPEG) {
-			video_encbuf_release(ch, codec, length);
-		} else if (free_item->type == AV_CODEC_ID_RGB888) {
-			int ret = video_ispbuf_release(ch, free_item->data_addr);
-			if (ret == NOK) {
-				video_ch4_delay_release((int)free_item->data_addr);
+		if (video_get_stream_info(ch) != 0) {
+			if (free_item->type == AV_CODEC_ID_H264 || free_item->type == AV_CODEC_ID_H265 || free_item->type == AV_CODEC_ID_MJPEG) {
+				video_encbuf_release(ch, codec, length);
+			} else if (free_item->type == AV_CODEC_ID_RGB888) {
+				int ret = video_ispbuf_release(ch, free_item->data_addr);
+				if (ret == NOK) {
+					video_ch4_delay_release((int)free_item->data_addr);
+				}
+				rgb_lock = 0;
+			} else {
+				video_ispbuf_release(ch, free_item->data_addr);
 			}
-			rgb_lock = 0;
-		} else {
-			video_ispbuf_release(ch, free_item->data_addr);
 		}
-
 		if (enc_queue_cnt[ch] > 0) {
 			enc_queue_cnt[ch]--;
 		}

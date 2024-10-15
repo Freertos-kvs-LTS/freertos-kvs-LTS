@@ -6,11 +6,11 @@
 #include "fatfs_sdcard_api.h"
 #include "fatfs_ramdisk_api.h"
 #include "fatfs_flash_api.h"
-
+#include "sd.h"
 int fatfs_get_interface(int interface)
 {
 	int drv_id = 0;
-	if (interface == VFS_INF_SD) {
+	if (interface == VFS_INF_SD || interface == VFS_INF_EMMC) {
 		drv_id = FATFS_getDrivernum("SD");
 	} else if (interface == VFS_INF_RAM) {
 		drv_id = FATFS_getDrivernum("RAM");
@@ -568,8 +568,14 @@ char *fatfs_gets(char *str, int num, vfs_file *finfo)
 int fatfs_mount(int interface)
 {
 	int ret = 0;
-	if (interface == VFS_INF_SD) {
-		printf("sd mount\r\n");
+	if (interface == VFS_INF_SD || interface == VFS_INF_EMMC) {
+		if (interface == VFS_INF_SD) {
+			emmc_set_enable(0);
+			printf("sd mount\r\n");
+		} else {
+			emmc_set_enable(1);
+			printf("emmc mount\r\n");
+		}
 		ret = fatfs_sd_init();
 	} else if (interface == VFS_INF_RAM) {
 		printf("ram mount\r\n");
@@ -587,8 +593,12 @@ int fatfs_mount(int interface)
 int fatfs_ummount(int interface)
 {
 	int ret = 0;
-	if (interface == VFS_INF_SD) {
-		printf("sd unmount\r\n");
+	if (interface == VFS_INF_SD || interface == VFS_INF_EMMC) {
+		if (interface == VFS_INF_SD) {
+			printf("sd unmount\r\n");
+		} else {
+			printf("emmc unmount\r\n");
+		}
 		ret = fatfs_sd_close();
 	} else if (interface == VFS_INF_RAM) {
 		printf("ram unmount\r\n");
@@ -606,8 +616,12 @@ int fatfs_ummount(int interface)
 int fatfs_format(int interface)
 {
 	int ret = 0;
-	if (interface == VFS_INF_SD) {
-		printf("sd format\r\n");
+	if (interface == VFS_INF_SD || interface == VFS_INF_EMMC) {
+		if (interface == VFS_INF_SD) {
+			printf("sd format\r\n");
+		} else {
+			printf("emmc format\r\n");
+		}
 		ret = fatfs_sd_format(NULL);
 	} else if (interface == VFS_INF_RAM) {
 		printf("ram format\r\n");

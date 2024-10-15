@@ -83,6 +83,8 @@
 
 #include <string.h>
 
+#include "wifi_constants.h"
+
 #ifdef LWIP_HOOK_FILENAME
 #include LWIP_HOOK_FILENAME
 #endif
@@ -456,10 +458,13 @@ dhcp_coarse_tmr(void)
     ) {	  
       /* compare lease time to expire timeout */
       if (dhcp->t0_timeout && (++dhcp->lease_used == dhcp->t0_timeout)) {
+		if(dhcp->state == DHCP_STATE_RENEWING){
+			wireless_send_event(NULL, WIFI_EVENT_DHCP_RENEW_TIMEOUT, NULL, 0, 0);
+		}
         LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_coarse_tmr(): t0 timeout\n"));
         /* this clients' lease time has expired */
 //ipv6
-#if LWIP_IPV4 && !LWIP_IPV6
+#if LWIP_IPV4 && !LWIP_IPV6 && LWIP_IGMP
         igmp_report_groups_leave(netif);    //Realtek add: not remove group to make able to report group when dhcp bind
 #endif
         dhcp_release_and_stop(netif);
@@ -513,7 +518,7 @@ dhcp_fine_tmr(void)
         LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_fine_tmr(): t0 timeout\n"));
         /* this clients' lease time has expired */
 //ipv6
-#if LWIP_IPV4 && !LWIP_IPV6
+#if LWIP_IPV4 && !LWIP_IPV6 && LWIP_IGMP
         igmp_report_groups_leave(netif);    //Realtek add: not remove group to make able to report group when dhcp bind
 #endif
         dhcp_release(netif);
@@ -819,6 +824,10 @@ dhcp_start(struct netif *netif)
 #if CONFIG_FAST_DHCP
   is_fast_dhcp = 0;
 #endif
+#if DHCP_CREATE_RAND_XID && defined(LWIP_SRAND)
+  /* For each system startup, fill in a random seed with different system ticks. */
+  LWIP_SRAND();
+#endif /* DHCP_CREATE_RAND_XID && defined(LWIP_SRAND) */
 /* Added by Realtek end*/
   /* no DHCP client attached yet? */
   if (dhcp == NULL) {
@@ -856,13 +865,6 @@ dhcp_start(struct netif *netif)
 /* Added by Realtek end*/
     /* dhcp is cleared below, no need to reset flag*/
   }
-
-//Realtek add
-#if DHCP_CREATE_RAND_XID && defined(LWIP_SRAND)
-  /* For each system startup, fill in a random seed with different system ticks. */
-  LWIP_SRAND();
-#endif /* DHCP_CREATE_RAND_XID && defined(LWIP_SRAND) */
-//Realtek add end
 
   /* clear data structure */
   memset(dhcp, 0, sizeof(struct dhcp));
@@ -1270,6 +1272,8 @@ dhcp_bind(struct netif *netif)
   /* netif is now bound to DHCP leased address - set this before assigning the address
      to ensure the callback can use dhcp_supplied_address() */
   dhcp_set_state(dhcp, DHCP_STATE_BOUND);
+
+  wireless_send_event(NULL, WIFI_EVENT_DHCP_IP_BIND, NULL, 0, ip4_addr_get_u32(&dhcp->offered_ip_addr));
 
   netif_set_addr(netif, &dhcp->offered_ip_addr, &sn_mask, &gw_addr);
   /* interface is used by routing now that an address is set */
@@ -1985,6 +1989,10 @@ dhcp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr,
            ((dhcp->state == DHCP_STATE_REBOOTING) || (dhcp->state == DHCP_STATE_REQUESTING) ||
             (dhcp->state == DHCP_STATE_REBINDING) || (dhcp->state == DHCP_STATE_RENEWING  ))) {
     LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("DHCP_NAK received\n"));
+	
+	if(dhcp->state == DHCP_STATE_RENEWING){
+		wireless_send_event(NULL, WIFI_EVENT_DHCP_RENEW_FAILED, NULL, 0, 0);
+	}
     dhcp_handle_nak(netif);
   }
   /* received a DHCP_OFFER in DHCP_STATE_SELECTING state? */
@@ -2136,7 +2144,22 @@ __attribute__((section (".retention.data"))) uint8_t retention_have_new_dhcp __a
 __attribute__((section (".retention.data"))) ip_addr_t retention_dns_servers[DNS_MAX_SERVERS] __attribute__((aligned(32)));
 __attribute__((section (".retention.data"))) uint16_t retention_tcp_port __attribute__((aligned(32))) = 0;
 __attribute__((section (".retention.data"))) uint16_t retention_udp_port __attribute__((aligned(32))) = 0;
+uint16_t dhcp_resume_t1_time = 0;
 extern struct netif xnetif[];
+
+ip4_addr_t dhcp_get_retention_gwip(void){
+  ip4_addr_t ip;
+  IP4_ADDR(&ip, 0, 0, 0, 0);
+
+  if ((retention_have_new_dhcp == 1) && (retention_dhcp.state != DHCP_STATE_OFF) && (retention_dhcp.offered_gw_addr.addr != 0)) {
+	return retention_dhcp.offered_gw_addr;
+  }
+  
+  printf("[%s] (failure) retention_have_new_dhcp: %d, state: %d, offered_gw_addr: %s\n\r"
+		 ,__FUNCTION__, retention_have_new_dhcp, retention_dhcp.state, ip4addr_ntoa( &retention_dhcp.offered_gw_addr ));
+
+  return ip;
+}
 
 int dhcp_retain(void)
 {
@@ -2201,6 +2224,16 @@ int dhcp_resume(void)
   is_fast_dhcp = 1;
 #endif
 
+  // dhcp time
+  if (dhcp_resume_t1_time) {
+    if (dhcp_resume_t1_time > dhcp->t1_timeout) {
+      dhcp_resume_t1_time = dhcp->t1_timeout;
+    }
+    dhcp->t1_renew_time = dhcp_resume_t1_time;
+    dhcp->t2_rebind_time = dhcp->t1_renew_time + (dhcp->t2_timeout - dhcp->t1_timeout);
+    dhcp->lease_used = dhcp->t1_timeout - dhcp->t1_renew_time;
+  }
+
   netif_set_client_data(&xnetif[0], LWIP_NETIF_CLIENT_DATA_INDEX_DHCP, dhcp);
   netif_set_addr(&xnetif[0], &dhcp->offered_ip_addr, &dhcp->offered_sn_mask, &dhcp->offered_gw_addr);
 
@@ -2222,6 +2255,16 @@ uint8_t lwip_check_dhcp_resume(void)
     return 1;
   }
 
+  return 0;
+}
+
+uint8_t lwip_set_dhcp_resume_t1(uint16_t t1_time)
+{
+  if (t1_time == 0) {
+    dhcp_resume_t1_time = 1;
+  } else {
+    dhcp_resume_t1_time = t1_time;
+  }
   return 0;
 }
 #endif // defined(CONFIG_LWIP_TCP_RESUME) && (CONFIG_LWIP_TCP_RESUME == 1)

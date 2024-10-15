@@ -12,7 +12,7 @@
 #include <wifi_ind.h>
 #include <osdep_service.h>
 #include <device_lock.h>
-
+//
 #if (defined(CONFIG_EXAMPLE_UART_ATCMD) && CONFIG_EXAMPLE_UART_ATCMD) || (defined(CONFIG_EXAMPLE_SPI_ATCMD) && CONFIG_EXAMPLE_SPI_ATCMD)
 #include "atcmd_wifi.h"
 #endif
@@ -28,7 +28,7 @@
 #endif
 
 //#include <drv_types.h>
-//
+
 /******************************************************
  *                    Constants
  ******************************************************/
@@ -58,6 +58,13 @@ rtw_mode_t wifi_mode = RTW_MODE_STA;
 #else
 extern rtw_mode_t wifi_mode;
 #endif
+
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6
+extern void dhcp6_stop(struct netif *netif);
+#endif
+#endif
+
 rtw_join_status_t rtw_join_status;
 rtw_joinstatus_callback_t p_wifi_joinstatus_user_callback = NULL;
 rtw_joinstatus_callback_t p_wifi_joinstatus_internal_callback = NULL;
@@ -159,6 +166,18 @@ void wifi_join_status_debug(rtw_join_status_t join_status)
 
 		is_filter_security = 0;
 		is_unsupport_security = 0;
+	} else if (join_status == RTW_JOINSTATUS_DISCONNECT) {
+		int reason_code = 0;
+		wifi_get_disconn_reason_code((unsigned short *)&reason_code);
+		if (65535 == reason_code) {
+			//printf("[wifi_join_status_debug] no beacon for a long time\n\r");
+		} else if (65534 == reason_code) {
+			//printf("[wifi_join_status_debug] ap has changed, disconnect now\n\r");
+		} else if (65533 == reason_code) {
+			//printf("[wifi_join_status_debug] Disconnection from driver\n\r");
+		} else {
+			// deauth reason code from the router
+		}
 	}
 
 	if (join_status == RTW_JOINSTATUS_FAIL) {
@@ -318,10 +337,13 @@ int wifi_connect(rtw_network_info_t *connect_param, unsigned char block)
 		  (connect_param->password_len <  RTW_MIN_PSK_LEN)) &&
 		 ((connect_param->security_type == RTW_SECURITY_WPA_TKIP_PSK) ||
 		  (connect_param->security_type == RTW_SECURITY_WPA_AES_PSK) ||
+		  (connect_param->security_type == RTW_SECURITY_WPA_MIXED_PSK) ||
 		  (connect_param->security_type == RTW_SECURITY_WPA2_AES_PSK) ||
 		  (connect_param->security_type == RTW_SECURITY_WPA2_TKIP_PSK) ||
 		  (connect_param->security_type == RTW_SECURITY_WPA2_MIXED_PSK) ||
-		  (connect_param->security_type == RTW_SECURITY_WPA_WPA2_MIXED) ||
+		  (connect_param->security_type == RTW_SECURITY_WPA_WPA2_TKIP_PSK) ||
+		  (connect_param->security_type == RTW_SECURITY_WPA_WPA2_AES_PSK) ||
+		  (connect_param->security_type == RTW_SECURITY_WPA_WPA2_MIXED_PSK) ||
 #ifdef CONFIG_SAE_SUPPORT
 		  (connect_param->security_type == RTW_SECURITY_WPA3_AES_PSK) ||
 		  (connect_param->security_type == RTW_SECURITY_WPA2_WPA3_MIXED) ||
@@ -667,6 +689,11 @@ int wifi_on(rtw_mode_t mode)
 	//TODO
 #else
 	LwIP_netif_set_up(0);
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6
+	netif_create_ip6_linklocal_address(&xnetif[0], 1);
+#endif
+#endif
 	if (mode == RTW_MODE_AP) {
 		LwIP_netif_set_link_up(0);
 	} else	 if (mode == RTW_MODE_STA_AP) {
@@ -695,6 +722,11 @@ int wifi_off(void)
 #else
 	dhcps_deinit();
 	LwIP_DHCP_stop(0);
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6_DHCP6
+	LwIP_DHCP6(0, DHCP6_STOP);
+#endif
+#endif
 	LwIP_netif_set_down(0);
 	LwIP_netif_set_down(1);
 #endif
@@ -1068,6 +1100,16 @@ int wifi_get_scan_records(unsigned int *AP_num, char *scan_buf)
 int wifi_scan_abort(void)
 {
 	return rtw_wx_scan_abort();
+}
+
+int wifi_set_country_code(const char *country_code)
+{
+	return rltk_wlan_set_country_code(country_code);
+}
+
+int wifi_set_channel_plan(u8 channel_plan)
+{
+	return rltk_wlan_set_channel_plan(channel_plan);
 }
 
 int wifi_connection_abort(void)

@@ -42,6 +42,12 @@
 #define STREAM_V3 2
 #define STREAM_V4 3
 
+#define STREAM_ID_V1 0
+#define STREAM_ID_V2 1
+#define STREAM_ID_V3 2
+#define STREAM_ID_V4 4
+#define STREAM_ID_VEXTRA 3
+
 #define VIDEO_MAX_NUM 4
 
 #define FCS_SYSTEM_REV_SIZE 32
@@ -49,7 +55,7 @@
 
 #define VIDEO_BOOT_STRUCT_MAX_SIZE ((2*1024) - (32*2))
 
-#define MAX_FCS_CHANNEL 2
+#define MAX_FCS_CHANNEL 4
 
 #define FCS_TALBE_NUM  11 //The parameter can't be changed
 
@@ -131,7 +137,8 @@ typedef struct  {
 	uint32_t init_saturation;
 	int32_t init_brightness;
 	uint32_t init_contrast;
-	uint32_t init_hue;
+	//uint32_t init_hue;
+	uint32_t init_mipi_mode;	//0=continue mode, 1=non-continue mode
 	uint32_t init_wdr_mode;
 	uint32_t init_wdr_level;
 	uint32_t init_hdr_mode;
@@ -179,6 +186,11 @@ typedef struct video_boot_stream_cfg {
 	video_boot_isp_initial_items_t init_isp_items;
 	uint32_t fcs_meta_offset;
 	uint32_t fcs_meta_total_size;
+	uint32_t extra_fcs_meta_enable_extend;
+	uint32_t extra_fcs_meta_extend_offset;
+	uint32_t extra_fcs_meta_extend_total_size;
 } video_boot_stream_t;
+
+void video_boot_setup_slot_num(int stream_id, int slot_number);
 #endif
 

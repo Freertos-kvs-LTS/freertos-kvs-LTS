@@ -459,7 +459,7 @@ dhcp_coarse_tmr(void)
         LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_coarse_tmr(): t0 timeout\n"));
         /* this clients' lease time has expired */
 //ipv6
-#if LWIP_IPV4 && !LWIP_IPV6
+#if LWIP_IPV4 && !LWIP_IPV6 && LWIP_IGMP
         igmp_report_groups_leave(netif);    //Realtek add: not remove group to make able to report group when dhcp bind
 #endif
         dhcp_release_and_stop(netif);
@@ -2019,6 +2019,9 @@ dhcp_create_msg(struct netif *netif, struct dhcp *dhcp, u8_t message_type, u16_t
   msg_out->htype = LWIP_IANA_HWTYPE_ETHERNET;
   msg_out->hlen = netif->hwaddr_len;
   msg_out->xid = lwip_htonl(dhcp->xid);
+  if ((message_type == DHCP_DISCOVER) || (message_type == DHCP_REQUEST)) {
+    msg_out->secs = (uint16_t)((sys_now() - dhcp->seconds_elapsed) / configTICK_RATE_HZ);			//Realtek add
+  }
   /* we don't need the broadcast flag since we can receive unicast traffic
      before being fully configured! */
   /* set ciaddr to netif->ip_addr based on message_type and state */

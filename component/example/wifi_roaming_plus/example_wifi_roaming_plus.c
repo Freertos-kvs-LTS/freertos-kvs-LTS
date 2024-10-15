@@ -195,7 +195,14 @@ WIFI_RETRY_LOOP:
 		wifi.key_id = key_id;
 		break;
 	case RTW_SECURITY_WPA_TKIP_PSK:
+	case RTW_SECURITY_WPA_AES_PSK:
+	case RTW_SECURITY_WPA_MIXED_PSK:
+	case RTW_SECURITY_WPA2_TKIP_PSK:
 	case RTW_SECURITY_WPA2_AES_PSK:
+	case RTW_SECURITY_WPA2_MIXED_PSK:
+	case RTW_SECURITY_WPA_WPA2_TKIP_PSK:
+	case RTW_SECURITY_WPA_WPA2_AES_PSK:
+	case RTW_SECURITY_WPA_WPA2_MIXED_PSK:
 #ifdef CONFIG_SAE_SUPPORT
 	case RTW_SECURITY_WPA3_AES_PSK:
 	case RTW_SECURITY_WPA3_GCMP_PSK:
@@ -382,7 +389,14 @@ int  wifi_write_ap_info_to_flash(unsigned int offer_ip, unsigned int server_ip)
 		fast_connect_info.security_type = RTW_SECURITY_WEP_PSK;
 		break;
 	case RTW_SECURITY_WPA_TKIP_PSK:
+	case RTW_SECURITY_WPA_AES_PSK:
+	case RTW_SECURITY_WPA_MIXED_PSK:
+	case RTW_SECURITY_WPA2_TKIP_PSK:
 	case RTW_SECURITY_WPA2_AES_PSK:
+	case RTW_SECURITY_WPA2_MIXED_PSK:
+	case RTW_SECURITY_WPA_WPA2_TKIP_PSK:
+	case RTW_SECURITY_WPA_WPA2_AES_PSK:
+	case RTW_SECURITY_WPA_WPA2_MIXED_PSK:
 #ifdef CONFIG_SAE_SUPPORT
 	case RTW_SECURITY_WPA3_AES_PSK:
 	case RTW_SECURITY_WPA3_GCMP_PSK:
@@ -750,6 +764,7 @@ void wifi_roaming_plus_thread(void *param)
 #endif
 
 	vTaskDelay(g_start_roaming_time * configTICK_RATE_HZ);
+	printf("\n Example: example_wifi_roaming_plus task start\n", __func__);
 	tick1 = xTaskGetTickCount();
 	while (1) {
 		if (wifi_is_running(WLAN0_IDX) && ((wifi_get_join_status() == RTW_JOINSTATUS_SUCCESS) && (*(u32 *)LwIP_GetIP(0) != IP_ADDR_INVALID))) {
@@ -1253,8 +1268,13 @@ void bandsteering_task(void *param)
 	switch (security_type) {
 	case RTW_SECURITY_WPA_TKIP_PSK:
 	case RTW_SECURITY_WPA_AES_PSK:
+	case RTW_SECURITY_WPA_MIXED_PSK:
 	case RTW_SECURITY_WPA2_AES_PSK:
 	case RTW_SECURITY_WPA2_TKIP_PSK:
+	case RTW_SECURITY_WPA2_MIXED_PSK:
+	case RTW_SECURITY_WPA_WPA2_TKIP_PSK:
+	case RTW_SECURITY_WPA_WPA2_AES_PSK:
+	case RTW_SECURITY_WPA_WPA2_MIXED_PSK:
 #ifdef CONFIG_SAE_SUPPORT
 	case RTW_SECURITY_WPA3_AES_PSK:
 	case RTW_SECURITY_WPA3_GCMP_PSK:

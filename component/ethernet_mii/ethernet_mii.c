@@ -16,33 +16,31 @@
 #include "timer_api.h"
 
 #if(CONFIG_ETHERNET == 1 && ETHERNET_INTERFACE == MII_INTERFACE)
-#if ((defined(CONFIG_PLATFORM_8195BHP) && (CONFIG_PLATFORM_8195BHP == 1))||(defined(CONFIG_PLATFORM_8735B) && (CONFIG_PLATFORM_8735B == 1)))
 #define ETH_TXDONE              EthTxDone
 #define ETH_RXDONE              EthRxDone
 #define ETH_LINKUP              EthLinkUp
 #define ETH_LINKDOWN            EthLinkDown
 
 #define MII_TX_DESC_NO					8
-#define MII_RX_DESC_NO					4
-#define MII_BUF_SIZE					1600
-#endif  // end of "#if defined(CONFIG_PLATFORM_8195BHP)"
+#define MII_RX_DESC_NO					8
+//#define MII_BUF_SIZE					1600
+
 
 static _sema mii_rx_sema;
+static _sema mii_tx_sema;
 static _mutex mii_tx_mutex;
-#if (defined(CONFIG_PLATFORM_8195A) && (CONFIG_PLATFORM_8195A == 1))
-extern volatile u32 ethernet_unplug;
-#elif ((defined(CONFIG_PLATFORM_8195BHP) && (CONFIG_PLATFORM_8195BHP == 1))||(defined(CONFIG_PLATFORM_8735B) && (CONFIG_PLATFORM_8735B == 1)))
 volatile u32 ethernet_unplug = 0;
-#endif
+
 
 extern void *pvPortMallocExt(size_t xWantedSize, int idx);
 extern struct netif  xnetif[NET_IF_NUM];
 
-static u8 TX_BUFFER[1536];
-static u8 RX_BUFFER[1536];
+static u8 TX_BUFFER[1536] __attribute__((aligned(32)));
+static u8 RX_BUFFER[1536] __attribute__((aligned(32)));
 
-static u8 *pTmpTxDesc = NULL;
-static u8 *pTmpRxDesc = NULL;
+extern uint32_t __sram_rev_start__[];
+static u8 *pTmpTxDesc = (u8 *)__sram_rev_start__;
+static u8 *pTmpRxDesc = (u8 *)(__sram_rev_start__ + (MII_TX_DESC_NO *ETH_TX_DESC_SIZE));
 static u8 *pTmpTxPktBuf = NULL;
 static u8 *pTmpRxPktBuf = NULL;
 
@@ -86,10 +84,8 @@ void mii_rx_thread(void *param)
 			if (len) {
 				//dbg_printf ("mii_recv len = %d\n\r", len);
 				ethernet_read((char *)pbuf, len);
-// calculate the time duration
+
 				ethernetif_mii_recv(&xnetif[ETHERNET_IDX], len);
-				//__rtl_memDump_v1_00(pbuf, len, "ethernet_receive Data:");
-				//rtw_memset(pbuf, 0, len);
 			} else if (len == 0) {
 				break;
 			}
@@ -99,6 +95,7 @@ exit:
 	rtw_free_sema(&mii_rx_sema);
 	vTaskDelete(NULL);
 }
+
 
 void mii_intr_thread(void *param)
 {
@@ -110,7 +107,7 @@ void mii_intr_thread(void *param)
 			break;
 		}
 
-		//Used to process there is no cable plugged in when power-on
+//Used to process there is no cable plugged in when power-on
 //		if(1 == ethernet_unplug){
 //			if(p_link_change_callback)
 //				p_link_change_callback(link_is_up);
@@ -153,20 +150,21 @@ void mii_intr_thread(void *param)
 void mii_intr_handler(u32 Event, u32 Data)
 {
 	switch (Event) {
-	case ETH_TXDONE:
+	case EthIntTok:
+		rtw_up_sema_from_isr(&mii_tx_sema);
 		//dbg_printf ("TX Data = %d\n", Data);
 		break;
-	case ETH_RXDONE:
+	case EthIntRok:
 		//dbg_printf ("\r\nRX Data = %d\n", Data);
 		// wake up rx thread to receive data
 		rtw_up_sema_from_isr(&mii_rx_sema);
 		break;
-	case ETH_LINKUP:
+	case EthIntLinkUp:
 		dbg_printf("Link Up\n");
 		link_is_up = 1;
 		rtw_up_sema_from_isr(&mii_linkup_sema);
 		break;
-	case ETH_LINKDOWN:
+	case EthIntLinkDown:
 		dbg_printf("Link Down\n");
 		link_is_up = 0;
 		rtw_up_sema_from_isr(&mii_linkup_sema);
@@ -177,14 +175,13 @@ void mii_intr_handler(u32 Event, u32 Data)
 	}
 }
 
-#if ((defined(CONFIG_PLATFORM_8735B) && (CONFIG_PLATFORM_8735B == 1)))
 void eth_phy_state_detect(void)
 {
 	if (link_is_up == 1) {
 		ethernet_detect_phy_state();
 	}
 }
-#endif
+
 
 void ethernet_demo(void *param)
 {
@@ -199,14 +196,6 @@ void ethernet_demo(void *param)
 
 	ethernet_irq_hook(mii_intr_handler);
 
-	if (pTmpTxDesc) {
-		free(pTmpTxDesc);
-		pTmpTxDesc = NULL;
-	}
-	if (pTmpRxDesc) {
-		free(pTmpRxDesc);
-		pTmpRxDesc = NULL;
-	}
 	if (pTmpTxPktBuf) {
 		free(pTmpTxPktBuf);
 		pTmpTxPktBuf = NULL;
@@ -216,20 +205,9 @@ void ethernet_demo(void *param)
 		pTmpRxPktBuf = NULL;
 	}
 
-#if ((defined(CONFIG_PLATFORM_8195BHP) && (CONFIG_PLATFORM_8195BHP == 1))||(defined(CONFIG_PLATFORM_8735B) && (CONFIG_PLATFORM_8735B == 1)))
-	//amebapro ethernet Tx/Rx buffer must be placed in internal ram, not placed in external LPDDR
-	pTmpTxDesc = (u8 *)pvPortMallocExt(/*MII_TX_DESC_CNT*/MII_TX_DESC_NO * ETH_TX_DESC_SIZE, 1);
-	pTmpRxDesc = (u8 *)pvPortMallocExt(/*MII_RX_DESC_CNT*/MII_RX_DESC_NO * ETH_RX_DESC_SIZE, 1);
 	pTmpTxPktBuf = (u8 *)pvPortMallocExt(/*MII_TX_DESC_CNT*/MII_TX_DESC_NO * ETH_PKT_BUF_SIZE, 1);
 	pTmpRxPktBuf = (u8 *)pvPortMallocExt(/*MII_RX_DESC_CNT*/MII_RX_DESC_NO * ETH_PKT_BUF_SIZE, 1);
 
-#else
-	pTmpTxDesc = (u8 *)malloc(/*MII_TX_DESC_CNT*/MII_TX_DESC_NO * ETH_TX_DESC_SIZE);
-	pTmpRxDesc = (u8 *)malloc(/*MII_RX_DESC_CNT*/MII_RX_DESC_NO * ETH_RX_DESC_SIZE);
-	pTmpTxPktBuf = (u8 *)malloc(/*MII_TX_DESC_CNT*/MII_TX_DESC_NO * ETH_PKT_BUF_SIZE);
-	pTmpRxPktBuf = (u8 *)malloc(/*MII_RX_DESC_CNT*/MII_RX_DESC_NO * ETH_PKT_BUF_SIZE);
-
-#endif  // end of "#if defined(CONFIG_PLATFORM_8195BHP)"    
 
 	if (pTmpTxDesc == NULL || pTmpRxDesc == NULL || pTmpTxPktBuf == NULL || pTmpRxPktBuf == NULL) {
 		printf("TX/RX descriptor malloc fail\n");
@@ -246,36 +224,26 @@ void ethernet_demo(void *param)
 	ethernet_trx_pre_setting(pTmpTxDesc, pTmpRxDesc, pTmpTxPktBuf, pTmpRxPktBuf);
 	printf("TRX pre setting done\n");
 
-#if ((defined(CONFIG_PLATFORM_8195BHP) && (CONFIG_PLATFORM_8195BHP == 1))||(defined(CONFIG_PLATFORM_8735B) && (CONFIG_PLATFORM_8735B == 1)))
 	u8 id[6] = {0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC};
 	ethernet_set_address((char *)id);
-#endif  // end of "#if defined(CONFIG_PLATFORM_8195BHP)"
+
 
 	ethernet_init();
 
-#if ((defined(CONFIG_PLATFORM_8735B) && (CONFIG_PLATFORM_8735B == 1)))
 	//Pro2 FEPHY  s/w patch
 	gtimer_init(&tm0_fephy, 1);
-	gtimer_start_periodical(&tm0_fephy, 5000000, (void *)eth_phy_state_detect, (uint32_t)NULL);
-#endif
+	gtimer_start_periodical(&tm0_fephy, 10000000, (void *)eth_phy_state_detect, (uint32_t)NULL);
 
-#if ((defined(CONFIG_PLATFORM_8195A) && (CONFIG_PLATFORM_8195A == 1))||(defined(CONFIG_PLATFORM_8735B) && (CONFIG_PLATFORM_8735B == 1)))
 	DBG_INFO_MSG_OFF(_DBG_MII_);
 	DBG_WARN_MSG_OFF(_DBG_MII_);
 	DBG_ERR_MSG_ON(_DBG_MII_);
-#endif
-
-#if defined(CONFIG_PLATFORM_8195BHP) && (CONFIG_PLATFORM_8195BHP == 1)
-	DBG_INFO_MSG_OFF(_DBG_ETH_);
-	DBG_WARN_MSG_OFF(_DBG_ETH_);
-	DBG_ERR_MSG_ON(_DBG_ETH_);
-#endif  // end of "#if defined(CONFIG_PLATFORM_8195BHP)"
 
 	/*get mac*/
 	ethernet_address((char *)mac);
 	memcpy((void *)xnetif[ETHERNET_IDX].hwaddr, (void *)mac, 6);
 
 	rtw_init_sema(&mii_rx_sema, 0);
+	rtw_init_sema(&mii_tx_sema, 1);
 	rtw_mutex_init(&mii_tx_mutex);
 
 #if LWIP_VERSION_MAJOR >= 2
@@ -358,7 +326,6 @@ void rltk_mii_recv(struct eth_drv_sg *sg_list, int sg_len)
 	}
 }
 
-
 s8 rltk_mii_send(struct eth_drv_sg *sg_list, int sg_len, int total_len)
 {
 	int ret = 0;
@@ -366,26 +333,37 @@ s8 rltk_mii_send(struct eth_drv_sg *sg_list, int sg_len, int total_len)
 	u8 *pdata = TX_BUFFER;
 	u8	retry_cnt = 0;
 	u32 size = 0;
+
+	rtw_mutex_get(&mii_tx_mutex);
+	//if (rtw_down_sema(&mii_tx_sema) == _FAIL) {
+	if (rtw_down_timeout_sema(&mii_tx_sema, 500) == _FAIL) {
+		dbg_printf("%s, Take Semaphore Fail \r\n", __FUNCTION__);
+	}
+
 	for (last_sg = &sg_list[sg_len]; sg_list < last_sg; ++sg_list) {
 		rtw_memcpy(pdata, (void *)(sg_list->buf), sg_list->len);
 		pdata += sg_list->len;
 		size += sg_list->len;
 	}
 	pdata = TX_BUFFER;
-	//DBG_8195A("mii_send len= %d\n\r", size);
-	rtw_mutex_get(&mii_tx_mutex);
+	//dbg_printf("mii_send len= %d\n\r", size);
+
 	while (1) {
+
 		ret = ethernet_write((char *)pdata, size);
+
 		if (ret > 0) {
 			ethernet_send();
 			ret = 0;
 			break;
 		}
+
 		if (++retry_cnt > 3) {
 			dbg_printf("TX drop\n\r");
 			ret = -1;
 		} else {
-			rtw_udelay_os(1);
+			dbg_printf("TX retry\n\r");
+			rtw_udelay_os(10);
 		}
 	}
 	rtw_mutex_put(&mii_tx_mutex);
@@ -434,6 +412,7 @@ int ethernet_wlan_iperf_test()
 	tcp_client_data.total_size = 0;
 
 	tcp_client_func(tcp_client_data);
+
 
 	return 0;
 }

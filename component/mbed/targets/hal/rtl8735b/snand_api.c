@@ -1,3 +1,4 @@
+
 /**************************************************************************//**
  * @file     snand_api.c
  * @brief    This file implements the SNAND (Serial NAND) Mbed HAL API functions.
@@ -32,29 +33,22 @@
 #include "snand_api.h"
 #include "cmsis.h"
 #include "hal_snand.h"
-
 #include "hal_cache.h" /**< dcache_invalidate_by_addr(addr, dsize), dcache_clean_by_addr(addr, dsize) */
 #define DCACHE_WB_BY_ADDR(addr,sz)      do {dcache_clean_by_addr(addr,sz);} while(0)
 #define DCACHE_INV_BY_ADDR(addr,sz)     do {dcache_invalidate_by_addr(addr,sz);} while(0)
-
 extern hal_snafc_adaptor_t *pglob_snafc_adaptor;
-
 #define EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW (0)
-
 #if EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW
 rtkNandInfo_t mSnandApiNandInfo;
 nand_chip_param_T *mSnandChipParam = NULL;
 #endif /* EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW */
-
 /* ======================================== */
 /* For S-NAND Bad-Block Management (BBM)    */
 /* ======================================== */
 #define MAGIC_PATTERN_LEN (4)
 #define SNAND_BBM_MEMCMP_MATCH (0)
-
 #define BBM_MAGIC_OFFSET (1) /* 1*sizeof(bb_m) = 8 byte */
 #define V2R_MAGIC_OFFSET (4) /* 4*sizeof(v2r) = 8 byte */
-
 /*
  id: spi nand flash id
  // isLastPage: 0 // (unknown) deprecated
@@ -337,11 +331,8 @@ static nand_chip_param_T nand_chip_id[] = {
 		.enable_dieon_ecc = TRUE,
 	},
 };
-
-
 uint32_t mSnandBbmLastGoodBlkIdx; /* =0; */
 uint32_t mSnandBbmLastRbaBlkIdx; /* =0; */
-
 struct mtd_info mSnandBbm_mtdInfo = {
 	.type = 0,
 	.flags = 0,
@@ -357,7 +348,6 @@ struct mtd_info mSnandBbm_mtdInfo = {
 	.writesize_mask = 11,
 	.bitflip_threshold = 10,
 };
-
 /**************************************************************************
  *                           D E F I N I T I O N S
  **************************************************************************/
@@ -383,10 +373,8 @@ _rtkNandInfo_dump(
 	/* ----- */
 	dbg_printf("  0x%08x, 0x%08x = (pBBM, nBBMBufSz)\r\n", rtkNandInfo->pBBM, rtkNandInfo->nBBMBufSz);
 	dbg_printf("  0x%08x, 0x%08x = (pV2R, nV2RBufSz)\r\n", rtkNandInfo->pV2R, rtkNandInfo->nV2RBufSz);
-
 	return SUCCESS;
 } /* _rtkNandInfo_dump */
-
 /**
  snand_bbm_init
  @brief Inital S-NAND BBM relate configuration before calling other snand_bbm APIs.
@@ -404,47 +392,39 @@ snand_bbm_init(
 		dbg_printf("ERR: NULL pointer to rtkNandInfo_t.\r\n");
 		return FAIL;
 	}
-
 	if ((!rtkNandInfo->writesize) || (!rtkNandInfo->erasesize) || (!rtkNandInfo->totalsize)) {
 		dbg_printf("ERR: Access size information of MTD device are 0.\r\n");
 		return FAIL;
 	}
-
 	if (((rtkNandInfo->writesize) > (rtkNandInfo->erasesize)) ||
 		((rtkNandInfo->erasesize) > (rtkNandInfo->totalsize)) ||
 		((rtkNandInfo->writesize) > (rtkNandInfo->totalsize))) {
 		dbg_printf("ERR: Access size for MTD device are INCORRECT.\r\n");
 		return FAIL;
 	}
-
 	if (!rtkNandInfo->pBuf) {
 		dbg_printf("ERR: NULL pointer to temp buffer.\r\n");
 		return FAIL;
 	}
-
 	if (!rtkNandInfo->writebufsize) {
 		dbg_printf("ERR: temp buffer size is 0.\r\n");
 		return FAIL;
 	}
-
 	if (!rtkNandInfo->RBA_PERCENT) {
 		dbg_printf("ERR: RBA_PERCENT is 0.\r\n");
 		return FAIL;
 	}
-
 #if 1 /* (optional) protection */
 	totalBlkCnt = (rtkNandInfo->totalsize) / (rtkNandInfo->erasesize);
 	if (rtkNandInfo->RBA_CNT != ((totalBlkCnt * rtkNandInfo->RBA_PERCENT) / 100)) {
 		dbg_printf("ERR: RBA_CNT incorrect.\r\n");
 		return FAIL;
 	}
-
 	if (rtkNandInfo->RBA_OFFSET != (totalBlkCnt - rtkNandInfo->RBA_CNT)) {
 		dbg_printf("ERR: RBA_OFFSET incorrect.\r\n");
 		return FAIL;
 	}
 #endif /* (optional) protection */
-
 	if ((!rtkNandInfo->pBBM) || (!rtkNandInfo->pV2R)) {
 		return FAIL;
 	}
@@ -454,7 +434,6 @@ snand_bbm_init(
 	if (rtkNandInfo->nV2RBufSz < sizeof(BB_v2r)) {
 		return FAIL;
 	}
-
 #if 1 /* (optional) protection */
 	/* Force BBMBufSz ALIGN to struct BB_t */
 	if (rtkNandInfo->nBBMBufSz % sizeof(BB_t)) {
@@ -465,14 +444,12 @@ snand_bbm_init(
 		return FAIL;
 	}
 #endif /* (optional) protection */
-
 	rtkNandInfo->magicStr[0] = 'R';
 	rtkNandInfo->magicStr[1] = 'T';
 	rtkNandInfo->magicStr[2] = 'K';
 	rtkNandInfo->magicStr[3] = 'N';
 	return SUCCESS;
 } /* snand_bbm_init */
-
 /* _snand_bbm_dump_short */
 static uint32_t
 _snand_bbm_dump_short(
@@ -483,7 +460,6 @@ _snand_bbm_dump_short(
 	uint16_t *pBuf = NULL;
 	uint32_t tLoopIdx = 0;
 	uint32_t tLoopCnt = 1;
-
 	if (pBufStart == NULL) {
 		return FAIL;
 	}
@@ -492,7 +468,6 @@ _snand_bbm_dump_short(
 	}
 	pBuf = (uint16_t *) pBufStart;
 	tLoopCnt = bufSzB / sizeof(uint16_t);
-
 	for (tLoopIdx = 0; tLoopIdx < tLoopCnt; tLoopIdx++, pBuf++) {
 		/* prefix for each LINE (16 bytes) */
 		if (0 == tLoopIdx % (16 / sizeof(uint16_t))) {
@@ -515,7 +490,6 @@ _snand_bbm_dump_short(
 	dbg_printf("\r\n");
 	return SUCCESS;
 } /* _snand_bbm_dump_short */
-
 /**
  snand_bbm_dump
  @brief Dump V2R_T and BBM_T data structure.
@@ -535,7 +509,6 @@ snand_bbm_dump(
 	if (SNAND_BBM_MEMCMP_MATCH != memcmp(rtkNandInfo->magicStr, "RTKN", MAGIC_PATTERN_LEN)) {
 		return FAIL;
 	}
-
 	if (opt & (1 << 0)) {
 		dbg_printf("Virtual-to-Real (V2R) mapping\r\n");
 		_snand_bbm_dump_short((uint32_t *) rtkNandInfo->pV2R, rtkNandInfo->nV2RBufSz);
@@ -548,7 +521,6 @@ snand_bbm_dump(
 	}
 	return SUCCESS;
 } /* snand_bbm_dump */
-
 /**
  snand_bbm_create
  @brief Create V2R_T data structure for mapping VIRTUAL ADDRESS to PHYSICAL ADDRESS; and create BBM_T data structure for mapping BAD block to (pre-reserved) GOOD block.
@@ -563,10 +535,8 @@ snand_bbm_create(
 {
 	uint32_t curBlkIdx;
 	//uint32_t dummyIdx;
-
 	uint32_t dummyIdx2;
 	uint32_t ppb = -1UL; /**< pagePerBlock */
-
 	if (!rtkNandInfo) {
 		return FAIL;
 	}
@@ -578,27 +548,22 @@ snand_bbm_create(
 	} else {
 		ppb = 0x40; /* default */
 	}
-
 	memset(rtkNandInfo->pBBM, 0xff, rtkNandInfo->nBBMBufSz);
 	memset(rtkNandInfo->pV2R, 0xff, rtkNandInfo->nV2RBufSz);
-
 #if 0
 	dbg_printf("%s Ln %d.\r\n", __FILE__, __LINE__); /*PhilipDebug*/
 #endif
-
 	/* MAGIC_PATTERN (8 bytes) for BBM */
 	rtkNandInfo->pBBM[0].BB_die = 0x4242;       /* "BB" */
 	rtkNandInfo->pBBM[0].bad_block = 0x544d;    /* "MT" */
 	rtkNandInfo->pBBM[0].RB_die = 0x6262;       /* "bb" */
 	rtkNandInfo->pBBM[0].remap_block = 0x746d;  /* "mt" */
-
 	/* MAGIC_PATTERN (8 bytes) for V2R */
 	rtkNandInfo->pV2R[0].block_r = 0x3256;  /* "V2" */
 	rtkNandInfo->pV2R[1].block_r = 0x5452;  /* "RT" */
 	rtkNandInfo->pV2R[2].block_r = 0x3276;  /* "v2" */
 	rtkNandInfo->pV2R[3].block_r = 0x7472;  /* "rt" */
 	mSnandBbmLastGoodBlkIdx = V2R_MAGIC_OFFSET;
-
 	for (curBlkIdx = 0; curBlkIdx < (rtkNandInfo->RBA_OFFSET); curBlkIdx++) {
 		hal_snand_pio_read(pglob_snafc_adaptor, rtkNandInfo->pBuf, rtkNandInfo->writebufsize, (curBlkIdx * ppb));
 		if (rtkNandInfo->pBuf[rtkNandInfo->writesize] == 0xFF) {
@@ -625,7 +590,6 @@ snand_bbm_create(
 	}
 	return SUCCESS;
 } /* snand_bbm_create */
-
 /**
  snand_bbm_load
  @brief Load S-NAND BBM data struct (BBM_T and V2R_T) from flash memory device to normal memory
@@ -650,13 +614,11 @@ snand_bbm_load(
 	if (SNAND_BBM_MEMCMP_MATCH != memcmp(rtkNandInfo->magicStr, "RTKN", MAGIC_PATTERN_LEN)) {
 		return FAIL;
 	}
-
 	if (rtkNandInfo->writesize) {
 		ppb = rtkNandInfo->erasesize / rtkNandInfo->writesize;
 	} else {
 		ppb = 0x40; /* default */
 	}
-
 	blkIdx = BBMT_BACKUP_BLOCK_IDX;
 	for (tmpIdx = 0; tmpIdx < BBMT_BACKUP_COPY; tmpIdx++) {
 		/*
@@ -677,7 +639,6 @@ snand_bbm_load(
 		blkIdx++;
 	}
 	//bbmtValid = TRUE;
-
 	blkIdx = V2RT_BACKUP_BLOCK_IDX;
 	for (tmpIdx = 0; tmpIdx < V2RT_BACKUP_COPY; tmpIdx++) {
 		/*
@@ -699,11 +660,9 @@ snand_bbm_load(
 		blkIdx++;
 	}
 	//v2rtValid = TRUE;
-
 	dbg_printf("[ToDo] else, BBM and V2R are available\r\n");
 	return SUCCESS;
 } /* snand_bbm_load */
-
 /**
  snand_bbm_store
  @brief Store S-NAND BBM data struct (BBM_T and V2R_T) from normal memory to flash memory device.
@@ -733,7 +692,6 @@ snand_bbm_store(
 	} else {
 		ppb = 0x40; /* default */
 	}
-
 	blkIdx = BBMT_BACKUP_BLOCK_IDX;
 	for (tmpIdx = 0; tmpIdx < BBMT_BACKUP_COPY; tmpIdx++) {
 		//dbg_printf("blockErase for specified blkPageAddr_BBM (0x%x).\r\n", ((blkIdx+tmpIdx)*ppb) );
@@ -754,7 +712,6 @@ snand_bbm_store(
 		blkIdx++;
 	}
 	//bbmtSaved = TRUE;
-
 	blkIdx = V2RT_BACKUP_BLOCK_IDX;
 	for (tmpIdx = 0; tmpIdx < V2RT_BACKUP_COPY; tmpIdx++) {
 		//dbg_printf("blockErase for specified blkPageAddr_V2R (0x%x).\r\n", ((blkIdx+tmpIdx)*ppb) );
@@ -775,11 +732,9 @@ snand_bbm_store(
 		blkIdx++;
 	}
 	//v2rtSaved = TRUE;
-
 	dbg_printf("[ToDo] If no error, BBM and V2R are stored in S-NAND flash\r\n");
 	return SUCCESS;
 } /* snand_bbm_store */
-
 /**
  snand_bbm_isBadBlock
  @brief Check specific flash block in BBM data structure is BAD or GOOD.
@@ -799,25 +754,20 @@ snand_bbm_isBadBlock(
 	uint32_t pagePerBlk = 0;
 	uint32_t totalBlkCnt = 0;
 	uint32_t tmpIdx = 0;
-
 	if ((!rtkNandInfo) || (SNAND_BBM_MEMCMP_MATCH != memcmp(rtkNandInfo->magicStr, "RTKN", MAGIC_PATTERN_LEN))) {
 		return SNAND_BBM_UNKNOWN_BLK;
 	}
-
 	// blkIdx = blkPageIdx/DEF_SNAND_PAGE_PER_BLOCK;
 	pagePerBlk = (rtkNandInfo->erasesize / rtkNandInfo->writesize);
 	blkIdx = blkPageIdx / pagePerBlk;
-
 	// if (blkIdx > MAX_BLK_CNT)
 	totalBlkCnt = (rtkNandInfo->totalsize / rtkNandInfo->erasesize);
 	if (blkIdx > totalBlkCnt) {
 		return SNAND_BBM_UNKNOWN_BLK;
 	}
-
 	if (blkIdx > rtkNandInfo->RBA_OFFSET) {
 		return SNAND_BBM_RSVD_BLK;
 	}
-
 	for (tmpIdx = BBM_MAGIC_OFFSET; tmpIdx < rtkNandInfo->RBA_CNT; tmpIdx++) {
 		if (rtkNandInfo->pBBM[tmpIdx].bad_block == 0xFFFF) {
 			return SNAND_BBM_GOOD_BLK;
@@ -828,7 +778,6 @@ snand_bbm_isBadBlock(
 	}
 	return SNAND_BBM_BAD_BLK;
 } /* snand_bbm_isBadBlock */
-
 /**
  snand_bbm_markBad
  @brief Mark specific flash block in BBM data structure as BAD block.
@@ -848,7 +797,6 @@ snand_bbm_markBad(
 	uint32_t tmpIdx = 0;
 	uint32_t pagePerBlk = 0; /* ppb */
 	uint32_t retVal = FAIL;
-
 	retVal = snand_bbm_isBadBlock(rtkNandInfo, blkPageIdx);
 	if (retVal == SNAND_BBM_UNKNOWN_BLK) {
 		return SNAND_BBM_UNKNOWN_BLK;
@@ -856,13 +804,10 @@ snand_bbm_markBad(
 	if (retVal == SNAND_BBM_BAD_BLK) {
 		return SNAND_BBM_BAD_BLK;
 	}
-
 	if ((!rtkNandInfo) || (SNAND_BBM_MEMCMP_MATCH != memcmp(rtkNandInfo->magicStr, "RTKN", MAGIC_PATTERN_LEN))) {
 		return SNAND_BBM_UNKNOWN_BLK;
 	}
-
 	pagePerBlk = (rtkNandInfo->erasesize / rtkNandInfo->writesize);
-
 	/*
 	  If reach here, mark USED BAD.
 	  1. Assign remap_block for BBM
@@ -884,7 +829,6 @@ snand_bbm_markBad(
 	if (tmpIdx == rtkNandInfo->RBA_CNT) {
 		return FAIL; /* Not available block in RBA to replace*/
 	}
-
 	for (tmpIdx = V2R_MAGIC_OFFSET; tmpIdx < rtkNandInfo->RBA_OFFSET; tmpIdx++) {
 		if (rtkNandInfo->pV2R[tmpIdx].block_r == blkIdx) {
 			rtkNandInfo->pV2R[tmpIdx].block_r = BBM_USD_BAD_TAG; /*0xFFFE*/
@@ -893,7 +837,6 @@ snand_bbm_markBad(
 	}
 	return SNAND_BBM_UNKNOWN_BLK;
 } /* snand_bbm_markBad */
-
 /**
  snand_bbm_translate
  @brief Translate specific flash blkPageAddr from VIRTUAL ADDRESS to PHYSICAL ADDRESS according to V2R_T and BBM_T data structure.
@@ -914,18 +857,14 @@ snand_bbm_translate(
 	uint32_t tmpIdx = 0;
 	uint32_t pagePerBlk = 0; /* ppb */
 	uint32_t retVal = FAIL;
-
 	tmpIdx = snand_bbm_isBadBlock(rtkNandInfo, blkPageIdx);
 	if (tmpIdx == SNAND_BBM_UNKNOWN_BLK) {
 		return SNAND_BBM_UNKWNON_TAG;
 	}
-
 	if ((!rtkNandInfo) || (SNAND_BBM_MEMCMP_MATCH != memcmp(rtkNandInfo->magicStr, "RTKN", MAGIC_PATTERN_LEN))) {
 		return SNAND_BBM_UNKNOWN_BLK;
 	}
-
 	pagePerBlk = (rtkNandInfo->erasesize / rtkNandInfo->writesize);
-
 	/*
 	  If reach here, start translate.
 	  1. lookup blkIdx for BBM.bad_block. If found, use BBM.remap_block as blkIdx to translate to real blkPageIdx.
@@ -934,7 +873,6 @@ snand_bbm_translate(
 	*/
 	blkIdx = blkPageIdx / pagePerBlk;
 	pageIdx = blkPageIdx % pagePerBlk;
-
 	for (tmpIdx = BBM_MAGIC_OFFSET; tmpIdx < rtkNandInfo->RBA_CNT; tmpIdx++) {
 		if (rtkNandInfo->pBBM[tmpIdx].bad_block == 0xFFFF) {
 			break;
@@ -945,7 +883,6 @@ snand_bbm_translate(
 			return retVal;
 		}
 	}
-
 	for (tmpIdx = V2R_MAGIC_OFFSET; tmpIdx < rtkNandInfo->RBA_OFFSET; tmpIdx++) {
 		if (rtkNandInfo->pV2R[tmpIdx].block_r == blkIdx) {
 			retVal = (blkIdx * pagePerBlk) + pageIdx;
@@ -954,7 +891,6 @@ snand_bbm_translate(
 	}
 	return SNAND_BBM_UNKWNON_TAG;
 } /* snand_bbm_translate */
-
 /* ======================================== */
 /* For access S-NAND flash device           */
 /* ======================================== */
@@ -968,14 +904,11 @@ snand_bbm_translate(
  1: WRITE page data via 4-bit mode (default)
  */
 #define SUPPORT_QUAD_BIT_MODE_W (1)
-
 /**
  0: Access page data via PIO mode
  1: Access page data via DMA mode (default)
  */
 #define DEFAULT_DATA_ACCESS_VIA_DMA (1)
-
-
 hal_snafc_adaptor_t mMBedAmebaPro2SnafcAdaptor = {
 	.irq_handle = { .irq_fun = NULL, .data = NULL, .irq_num = 0, .priority = 0, },
 	.initVal[SNAFC_SPEED_SEL_0].l = 0x00001043, /* Est. sck=12.50 MHz, with pipe_lat=0 (0..3) */
@@ -996,21 +929,17 @@ hal_snafc_adaptor_t mMBedAmebaPro2SnafcAdaptor = {
 	.funcDisQuadSpiMode = NULL,
 	.funcChkEccSts = NULL,
 	.funcChkPgmSts = NULL,
-
 	.snand_cmd_info.w_cmd_cycle = (1),
 	.snand_cmd_info.w_cmd = SNAND_PROGRAM_LOAD_OP,
 	.snand_cmd_info.w_addr_cycle = (3),
 	.snand_cmd_info.w_addr_io = SNAFC_SIO_WIDTH,
 	.snand_cmd_info.w_data_io = SNAFC_SIO_WIDTH,
-
 	.snand_cmd_info.r_cmd_cycle = (1),
 	.snand_cmd_info.r_cmd = SNAND_NORMAL_READ_OP,
 	.snand_cmd_info.r_addr_cycle = (3),
 	.snand_cmd_info.r_addr_io = SNAFC_SIO_WIDTH,
 	.snand_cmd_info.r_data_io = SNAFC_SIO_WIDTH,
 };
-
-
 /* Default BUS setting for WRITE */
 #define SNAND_API_DEF_W_CMD_CYCLE (3)
 #define SNAND_API_DEF_W_CMD_IOWIDTH (SNAFC_SIO_WIDTH)
@@ -1021,7 +950,6 @@ hal_snafc_adaptor_t mMBedAmebaPro2SnafcAdaptor = {
 #define SNAND_API_DEF_W_CMD_OP (SNAND_PROGRAM_LOAD_OP)    /*@@ sa enum snandBusOpCmd_e in rtl8735b_snand.h */
 #define SNAND_API_DEF_W_DAT_IOWIDTH (SNAFC_SIO_WIDTH)     /*@@ sa enum snandBusOpCmd_e in rtl8735b_snand.h */
 #endif
-
 /* Default BUS setting for READ */
 #define SNAND_API_DEF_R_CMD_CYCLE (3)
 #define SNAND_API_DEF_R_CMD_IOWIDTH (SNAFC_SIO_WIDTH)
@@ -1044,7 +972,6 @@ snand_bus_cfg_t mMBedAmebaPro2SnafcCmd = {
 	.r_addr_io = SNAND_API_DEF_R_CMD_IOWIDTH,
 	.r_data_io = SNAND_API_DEF_R_DAT_IOWIDTH,
 };
-
 /**
   * @brief  Lock resource before flash processing
   * @param  none
@@ -1052,7 +979,6 @@ snand_bus_cfg_t mMBedAmebaPro2SnafcCmd = {
   * @note  This api can be used to define IC specified operations before flash processing. Please check the project about its implementation.
   */
 __weak void snand_resource_lock(void);
-
 /**
   * @brief  Unlock resource after flash processing
   * @param  none
@@ -1060,7 +986,6 @@ __weak void snand_resource_lock(void);
   * @note  This api can be used to define IC specified operations after flash processing. Please check the project about its implementation.
   */
 __weak void snand_resource_unlock(void);
-
 /**
   * @brief  Init Flash Pinmux
   * @param  obj: address of the flash object
@@ -1069,10 +994,7 @@ __weak void snand_resource_unlock(void);
   */
 void snand_pinmux_init(snand_t *obj, snafcPinmuxSel_t pin_sel)
 {
-
 }
-
-
 #if EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW
 /**
  matching_for_spi_rdid
@@ -1087,12 +1009,10 @@ matching_for_spi_rdid(
 {
 	uint32_t tmpIdx = 0;
 	uint32_t tmpRdId = 0;
-
 	if (!nand_chip_id) {
 		/* (GLOBAL VARIABLE) NOT FOUND */
 		return NULL;
 	}
-
 	for (tmpIdx = 0; tmpIdx < (sizeof(nand_chip_id) / sizeof(nand_chip_param_T)); tmpIdx++) {
 		if (nand_chip_id[tmpIdx].id_len == 2) {
 			tmpRdId = (rdid & 0xFFFF);
@@ -1110,7 +1030,6 @@ matching_for_spi_rdid(
 	return NULL;
 } /* matching_for_spi_rdid */
 #endif /* EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW */
-
 /**
   * @brief  De-Init S-NAND Flash
   * @param  obj: address of the flash object
@@ -1123,7 +1042,6 @@ void snand_deinit(snand_t *obj)
 	pglob_snafc_adaptor = NULL;
 	obj->psnand_adapter = NULL;
 }
-
 /**
   * @brief  Init S-NAND Flash
   * @param  obj: address of the flash object
@@ -1131,7 +1049,6 @@ void snand_deinit(snand_t *obj)
   */
 void snand_init(snand_t *obj)
 {
-
 	if (pglob_snafc_adaptor == NULL) {
 		hal_snafc_adaptor_t *ptPro2SnafcAdator;
 		uint32_t tDevId;
@@ -1142,7 +1059,6 @@ void snand_init(snand_t *obj)
 		memcpy((void *) & (ptPro2SnafcAdator->snand_cmd_info), (void *) &mMBedAmebaPro2SnafcCmd, sizeof(snand_bus_cfg_t));
 		hal_snand_init(ptPro2SnafcAdator);
 		tDevId = hal_snand_read_id(ptPro2SnafcAdator);
-
 #if 0 /* DEBUG only */
 		tCmd = 0xa0;
 		tRetVal = hal_snand_get_status(ptPro2SnafcAdator, tCmd);
@@ -1154,7 +1070,6 @@ void snand_init(snand_t *obj)
 		tRetVal = hal_snand_get_status(ptPro2SnafcAdator, tCmd);
 		dbg_printf("getf 0x%02x return 0x%x.\r\n", tCmd, tRetVal);
 #endif
-
 		if (tDevId == 0) {
 			DBG_SNAND_ERR("snand_init err (DevId=0)\r\n");
 		} else {
@@ -1164,11 +1079,8 @@ void snand_init(snand_t *obj)
 			uint32_t pagesPerBlk;
 			uint32_t totalBlkCnt;
 			uint32_t rbaPercentage = DEF_RESERVED_BLOCK_AREA_PERCENTAGE;
-
 #endif /* EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW */
-
 			pglob_snafc_adaptor = ptPro2SnafcAdator;
-
 #if EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW
 			mSnandChipParam = matching_for_spi_rdid(tDevId);
 			if (!mSnandChipParam) {
@@ -1187,7 +1099,6 @@ void snand_init(snand_t *obj)
 			mSnandApiNandInfo.erasesize = (mSnandApiNandInfo.writesize) * pagesPerBlk; /* blockSize (Bytes) */
 			mSnandApiNandInfo.totalsize = (mSnandApiNandInfo.erasesize) * totalBlkCnt; /* flashDevSize (Bytes) */
 			mSnandApiNandInfo.writebufsize = (pageBufSzB + spareBufSzB); /* write buffer size, the same as pageSize for most of S-NAND flash device */
-
 			if (mSnandApiNandInfo.pBuf) {
 				free(mSnandApiNandInfo.pBuf);
 				mSnandApiNandInfo.pBuf = NULL;
@@ -1198,11 +1109,9 @@ void snand_init(snand_t *obj)
 				dbg_printf("Error: %s Ln %d. malloc(0x%x) return NULL.\r\n", __FILE__, __LINE__, mSnandApiNandInfo.writebufsize);
 				goto _snand_api_bbm_init_release;
 			}
-
 			mSnandApiNandInfo.RBA_PERCENT = DEF_RESERVED_BLOCK_AREA_PERCENTAGE; /* It means, reserved 5% of totalBlkCnt as Reserved Block Area (RBA) */
 			mSnandApiNandInfo.RBA_CNT = totalBlkCnt * (mSnandApiNandInfo.RBA_PERCENT) / 100; /* RBA block cout. */
 			mSnandApiNandInfo.RBA_OFFSET = totalBlkCnt - (mSnandApiNandInfo.RBA_CNT); /* Start block index for RBA. (RBA located in the end of flash device) */
-
 			if (mSnandApiNandInfo.pBBM) {
 				free(mSnandApiNandInfo.pBBM);
 				mSnandApiNandInfo.pBBM = NULL;
@@ -1214,7 +1123,6 @@ void snand_init(snand_t *obj)
 				dbg_printf("Error: %s Ln %d. malloc(0x%x) return NULL.\r\n", __FILE__, __LINE__, mSnandApiNandInfo.nBBMBufSz);
 				goto _snand_api_bbm_init_release;
 			}
-
 			if (mSnandApiNandInfo.pV2R) {
 				free(mSnandApiNandInfo.pV2R);
 				mSnandApiNandInfo.pV2R = NULL;
@@ -1226,7 +1134,6 @@ void snand_init(snand_t *obj)
 				dbg_printf("Error: %s Ln %d. malloc(0x%x) return NULL.\r\n", __FILE__, __LINE__, mSnandApiNandInfo.nV2RBufSz);
 				goto _snand_api_bbm_init_release;
 			}
-
 			tRetVal = snand_bbm_init(&mSnandApiNandInfo);
 			if (tRetVal != SUCCESS) {
 				tRetVal = FAIL;
@@ -1234,7 +1141,6 @@ void snand_init(snand_t *obj)
 				rtkNandInfo_dump(&mSnandApiNandInfo);
 				goto _snand_api_bbm_init_release;
 			}
-
 			if (tRetVal != SUCCESS) {
 _snand_api_bbm_init_release:
 				if (mSnandApiNandInfo.pBBM) {
@@ -1255,7 +1161,6 @@ _snand_api_bbm_init_release:
 	}
 	obj->psnand_adapter = pglob_snafc_adaptor;
 }
-
 /**
   * @brief  Get flash ID (command: 0x9F), works in SPI mode only.
   * @param  obj: Flash object define in application software.
@@ -1267,14 +1172,11 @@ int snand_read_id(snand_t *obj, uint8_t *buf, uint8_t len)
 {
 	hal_snafc_adaptor_t *ptPro2SnafcAdator;
 	u8 index;
-
 	snand_init(obj);
 	ptPro2SnafcAdator = (obj->psnand_adapter);
-
 	if (len < 3) {
 		DBG_SNAND_ERR("ID length should be >= 3\r\n");
 	}
-
 	if ((ptPro2SnafcAdator->devId[0] == 0x0)
 		|| (ptPro2SnafcAdator->devId[0] == 0xFF)) {
 		DBG_SNAND_ERR("Invalide ID\r\n");
@@ -1284,10 +1186,8 @@ int snand_read_id(snand_t *obj, uint8_t *buf, uint8_t len)
 			buf[index] = ptPro2SnafcAdator->devId[index];
 		}
 	}
-
 	return len;
 }
-
 /**
   * @brief  Erase flash block, usually 1 block = 64K bytes
     Please refer to flash data sheet to confirm the actual block size.
@@ -1302,9 +1202,7 @@ int snand_erase_block(snand_t *obj, uint32_t address)
 	uint32_t tVirtualAddr = address;
 #endif /* EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW */
 	snand_init(obj);
-
 	snand_resource_lock();
-
 #if EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW
 	tRetVal = snand_bbm_translate(&mSnandApiNandInfo, tVirtualAddr /* blkPageIdx */);
 	if (tRetVal == SNAND_BBM_UNKWNON_TAG) {
@@ -1314,7 +1212,6 @@ int snand_erase_block(snand_t *obj, uint32_t address)
 	}
 	address = tRetVal; /* translate the blkPageIdx from virtual address (VA) to phyiscal address (PA) */
 #endif /* EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW */
-
 	hal_snand_block_erase((obj->psnand_adapter), address);
 	tRetVal = hal_snand_get_status(NULL, 0xc0);
 	if (tRetVal & (1 << 2) /*E_FAIL*/) {
@@ -1324,15 +1221,12 @@ int snand_erase_block(snand_t *obj, uint32_t address)
 		snand_bbm_markBad(&mSnandApiNandInfo, tVirtualAddr /* blkPageIdx */);
 		snand_bbm_store(&mSnandApiNandInfo);
 #endif /* EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW */
-
 	} else {
 		tRetVal = SUCCESS;
 	}
 	snand_resource_unlock();
 	return tRetVal;
 }
-
-
 /**
   * @brief  Read a stream of data from specified address vai user mode
   * @param  obj: Specifies the parameter of flash object.
@@ -1348,9 +1242,7 @@ int  snand_page_read(snand_t *obj, uint32_t address, uint32_t Length, uint8_t *d
 	uint32_t tVirtualAddr = address;
 #endif /* EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW */
 	snand_init(obj);
-
 	snand_resource_lock();
-
 #if EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW
 	tRetVal = snand_bbm_translate(&mSnandApiNandInfo, tVirtualAddr /* blkPageIdx */);
 	if (tRetVal == SNAND_BBM_UNKWNON_TAG) {
@@ -1360,7 +1252,6 @@ int  snand_page_read(snand_t *obj, uint32_t address, uint32_t Length, uint8_t *d
 	}
 	address = tRetVal; /* translate the blkPageIdx from virtual address (VA) to phyiscal address (PA) */
 #endif /* EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW */
-
 #if DEFAULT_DATA_ACCESS_VIA_DMA
 	DCACHE_WB_BY_ADDR((uint32_t *)(data), Length);
 	hal_snand_dma_read((obj->psnand_adapter), data, Length, address);
@@ -1368,7 +1259,6 @@ int  snand_page_read(snand_t *obj, uint32_t address, uint32_t Length, uint8_t *d
 #else
 	hal_snand_pio_read((obj->psnand_adapter), data, Length, address);
 #endif
-
 	tRetVal = hal_snand_get_status(NULL, 0xc0);
 	if ((0x20 /*CANNOT FIX*/ == (tRetVal & 0x30)) ||
 		(0x30 /*RSVD*/ == (tRetVal & 0x30))) {
@@ -1384,13 +1274,11 @@ int  snand_page_read(snand_t *obj, uint32_t address, uint32_t Length, uint8_t *d
 	snand_resource_unlock();
 	return tRetVal;
 }
-
 /*
 Function Description:
 This function performans the same functionality as the function snand_stream_write.
 It enhances write performance by reducing overheads.
 Users can use either of functions depending on their needs.
-
 * @brief  Write a stream of data to specified address
 * @param  obj: Specifies the parameter of flash object.
 * @param  address: Specifies the address to be programmed.
@@ -1398,7 +1286,6 @@ Users can use either of functions depending on their needs.
 * @param  data: Specified the pointer of the data to be written.
           If the address is in the flash, full address is required, i.e. SPI_FLASH_BASE + Offset
 * @retval SUCCESS, FAIL
-
 */
 int snand_page_write(snand_t *obj, uint32_t address, uint32_t Length, uint8_t *data)
 {
@@ -1406,11 +1293,8 @@ int snand_page_write(snand_t *obj, uint32_t address, uint32_t Length, uint8_t *d
 #if EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW
 	uint32_t tVirtualAddr = address;
 #endif /* EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW */
-
 	snand_init(obj);
-
 	snand_resource_lock();
-
 #if EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW
 	tRetVal = snand_bbm_translate(&mSnandApiNandInfo, tVirtualAddr /* blkPageIdx */);
 	if (tRetVal == SNAND_BBM_UNKWNON_TAG) {
@@ -1420,15 +1304,12 @@ int snand_page_write(snand_t *obj, uint32_t address, uint32_t Length, uint8_t *d
 	}
 	address = tRetVal; /* translate the blkPageIdx from virtual address (VA) to phyiscal address (PA) */
 #endif /* EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW */
-
-
 #if DEFAULT_DATA_ACCESS_VIA_DMA
 	DCACHE_WB_BY_ADDR((uint32_t *)(data), Length);
 	hal_snand_dma_write((obj->psnand_adapter), data, Length, address);
 #else
 	hal_snand_pio_write((obj->psnand_adapter), data, Length, address);
 #endif
-
 	tRetVal = hal_snand_get_status(NULL, 0xc0);
 	if (tRetVal & (1 << 3) /*P_FAIL*/) {
 		DBG_SNAND_ERR("%s: P_FAIL (0x%x) for page write 0x%x.\r\n", __FUNCTION__, tRetVal, address);
@@ -1443,14 +1324,11 @@ int snand_page_write(snand_t *obj, uint32_t address, uint32_t Length, uint8_t *d
 	snand_resource_unlock();
 	return tRetVal;
 }
-
-
 /*
 Function Description:
 This function aims to read the value of the status register 1.
 It can be used to check the current status of the flash including protected region, busy state etc.
 Please refer to the datatsheet of flash for more details of the content of status register.
-
 * @brief  Read Status register to check flash status
 * @param  obj: Specifies the parameter of flash object.
 * @param  offset: Specifies which register offset users like to access
@@ -1460,24 +1338,19 @@ int snand_get_feature(snand_t *obj, uint32_t offset)
 {
 	hal_snafc_adaptor_t *ptPro2SnafcAdator;
 	u8 status = 0;
-
 	snand_init(obj);
 	ptPro2SnafcAdator = (obj->psnand_adapter);
-
 	snand_resource_lock();
 	status = hal_snand_get_status(ptPro2SnafcAdator, offset);
 	snand_resource_unlock();
-
 	return status;
 }
-
 /*
 Function Description:
 This function aims to set the value of the status register 1.
 It can be used to protect partial flash region.
 Please refer to the datatsheet of flash for more details of the content of status register.
 The block protected area and the corresponding control bits are provided in the flash datasheet.
-
 * @brief  Set Status register to enable desired operation
 * @param  obj: Specifies the parameter of flash object.
 * @param  offset: Specifies which register offset users like to access
@@ -1488,18 +1361,13 @@ The block protected area and the corresponding control bits are provided in the 
 int snand_set_feature(snand_t *obj, uint32_t offset, uint32_t data)
 {
 	hal_snafc_adaptor_t *ptPro2SnafcAdator;
-
 	snand_init(obj);
 	ptPro2SnafcAdator = (obj->psnand_adapter);
-
 	snand_resource_lock();
 	hal_snand_set_status(ptPro2SnafcAdator, offset, (u8)data);
 	snand_resource_unlock();
-
 	return SUCCESS;
 }
-
-
 /*
 Function Description:
 This function aims to get the density of the flash.
@@ -1520,11 +1388,9 @@ uint32_t snand_get_size(snand_t *obj)
 #else /* Hack */
 	size = 1024; /* Hard-code test */
 #endif
-
 	dbg_printf("Flash Size = %d Mbit\r\n", size);
 	return size;
 }
-
 /*
  Using this API to faster SPI_CLK
 */
@@ -1545,7 +1411,6 @@ void snand_clk_faster(void)
 		snand_resource_unlock();
 	}
 }
-
 /*
  Using this API to slower SPI_CLK
 */
@@ -1566,7 +1431,6 @@ void snand_clk_slower(void)
 		snand_resource_unlock();
 	}
 }
-
 /***********************************************************************************
 The following functions are flash dependent setting.
 Plase refer to data sheets of the target flash.
@@ -1576,13 +1440,11 @@ Plase refer to data sheets of the target flash.
  Using set_feature OPCMD to ask S-NAND device goes into QUAD-bit mode
  And, change SNAFC's CMD from SIO (SNAND_PROGRAM_LOAD_OP, and SNAND_NORMAL_READ_OP) to QIO (SNAND_PROGRAM_LOAD_X4_OP, and SNAND_FAST_READ_X4_OP)
 */
-
 void snand_set_quad_bit_mode(void)
 {
 	uint32_t tVal;
 	hal_snafc_adaptor_t *ptPro2SnafcAdator;
 	ptPro2SnafcAdator = &mMBedAmebaPro2SnafcAdaptor;
-
 	if (pglob_snafc_adaptor == NULL) {
 		snand_resource_lock();
 		hal_snand_init(ptPro2SnafcAdator);
@@ -1601,7 +1463,6 @@ void snand_set_quad_bit_mode(void)
 	}
 	snand_resource_unlock();
 }
-
 /*
  Change SNAFC's CMD from QIO (SNAND_PROGRAM_LOAD_X4_OP, and SNAND_FAST_READ_X4_OP) to SIO (SNAND_PROGRAM_LOAD_OP, and SNAND_NORMAL_READ_OP).
  (Keep flash device's feature setting as previous)
@@ -1623,7 +1484,6 @@ void snand_unset_quad_bit_mode(void)
 	ptPro2SnafcAdator->snand_cmd_info.r_data_io = SNAFC_SIO_WIDTH;
 	snand_resource_unlock();
 }
-
 /***********************************************************************************
 The following functions are compatile with Winbond flash only.
 But not all Winbond flash supports these functions,
@@ -1645,7 +1505,6 @@ void snand_set_lock_mode(uint32_t mode)
 	hal_snand_set_status(pglob_snafc_adaptor, 0xA0, mode);
 	snand_resource_unlock();
 }
-
 /*Lock whole flash chip*/
 void snand_global_lock(void)
 {
@@ -1659,7 +1518,6 @@ void snand_global_lock(void)
 	hal_snand_set_status(pglob_snafc_adaptor, 0xA0, 0x38);
 	snand_resource_unlock();
 }
-
 /*Unlock whole flash chip*/
 void snand_global_unlock(void)
 {
@@ -1673,4 +1531,64 @@ void snand_global_unlock(void)
 	hal_snand_set_status(pglob_snafc_adaptor, 0xA0, 0x00);
 	snand_resource_unlock();
 }
-
+/**
+  * @brief  Using Winbond's CONTINUE PAGE READ mode to read data
+  * @param  obj: Specifies the parameter of flash object.
+  * @param  address: Specifies the page address to be read. (Suggest as start page of each block)
+  * @param  len: Specifies the length of the data to read. (Suggest as (pageSize*pageCount) of whole block)
+  * @param  data: Specified the address to save the readback data.
+  * @retval   SUCCESS, FAIL
+  */
+int  snand_winbond_cont_read(snand_t *obj, uint32_t address, uint32_t Length, uint8_t *data)
+{
+	uint32_t tRetVal = FAIL;
+#define WINBOND_BUF_MODE_EN (1<<3)
+	uint32_t tSR2_BUF0, tSR2_BUF1;
+#define EN_TIME_MEASURE (0)
+#if EN_TIME_MEASURE
+	uint32_t time1, time2;
+#endif
+#if EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW
+	uint32_t tVirtualAddr = address;
+#endif /* EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW */
+	snand_init(obj);
+	snand_resource_lock();
+#if EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW
+	tRetVal = snand_bbm_translate(&mSnandApiNandInfo, tVirtualAddr /* blkPageIdx */);
+	if (tRetVal == SNAND_BBM_UNKWNON_TAG) {
+		snand_resource_unlock();
+		tRetVal = FAIL;
+		return tRetVal;
+	}
+	address = tRetVal; /* translate the blkPageIdx from virtual address (VA) to phyiscal address (PA) */
+#endif /* EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW */
+	tRetVal = hal_snand_get_status(pglob_snafc_adaptor, 0xB0);
+	tSR2_BUF1 = tRetVal; // W25N01GVxxxG default BUF=1
+	tSR2_BUF0 = tSR2_BUF1 & ~(WINBOND_BUF_MODE_EN);
+	hal_snand_set_status(pglob_snafc_adaptor, 0xB0, tSR2_BUF0); // Set BUF=0 (Enter CONTINUE READ mode)
+	DCACHE_WB_BY_ADDR((uint32_t *)(data), Length);
+#if EN_TIME_MEASURE
+	time1 = hal_read_curtime_us();
+#endif
+	tRetVal = hal_snand_dma_cont_read((obj->psnand_adapter), data, Length, address);
+#if EN_TIME_MEASURE
+	time2 = hal_read_curtime_us();
+	dbg_printf(" takes %d usec. (%d - %d)\r\n", (time2 - time1), time2, time1);
+#endif
+	DCACHE_INV_BY_ADDR((uint32_t *)(data), Length);
+	tRetVal = hal_snand_get_status(NULL, 0xc0);
+	if ((0x20 /*CANNOT FIX*/ == (tRetVal & 0x30)) ||
+		(0x30 /*RSVD*/ == (tRetVal & 0x30))) {
+		DBG_SNAND_ERR("%s: ECC error (0x%x) for page read 0x%x.\r\n", __FUNCTION__, tRetVal, address);
+		tRetVal = FAIL;
+#if EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW
+		snand_bbm_markBad(&mSnandApiNandInfo, tVirtualAddr /* blkPageIdx */);
+		snand_bbm_store(&mSnandApiNandInfo);
+#endif /* EMBED_BAD_BLOCK_LOOKUP_AND_TRANSLATE_IN_API_FLOW */
+	} else {
+		tRetVal = SUCCESS;
+	}
+	hal_snand_set_status(pglob_snafc_adaptor, 0xB0, tSR2_BUF1); // Set BUF=1 (Exit CONTINUE READ mode)(Normal page read mode)
+	snand_resource_unlock();
+	return tRetVal;
+}

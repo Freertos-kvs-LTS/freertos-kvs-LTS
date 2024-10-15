@@ -249,7 +249,7 @@ extern void ble_central_app_deinit(void);
 void fATBc(void *arg)
 {
 	int argc = 0;
-	int param = 0;
+	char param = '0';
 	char *argv[MAX_ARGC] = {0};
 
 	if (arg) {
@@ -263,8 +263,8 @@ void fATBc(void *arg)
 		goto exit;
 	}
 
-	param = atoi(argv[1]);
-	if (param == 1) {
+	param = *argv[1];
+	if (param == '1') {
 		if (bt_command_type(BT_COMMAND_STACK)) {
 			AT_PRINTK("[AT_PRINTK] ERROR: command type error!\n\r");
 			goto exit;
@@ -272,7 +272,7 @@ void fATBc(void *arg)
 		AT_PRINTK("[ATBc]:_AT_BLE_CENTRAL_[ON]\n\r");
 		ble_central_app_init();
 		set_bt_cmd_type(CENTRAL_BIT | STACK_BIT);
-	} else if (param == 0) {
+	} else if (param == '0') {
 		if (!bt_command_type(BT_COMMAND_CENTRAL)) {
 			AT_PRINTK("[AT_PRINTK] ERROR: command type error!\n\r");
 			goto exit;
@@ -645,7 +645,7 @@ extern void ble_app_deinit(void);
 void fATBp(void *arg)
 {
 	int argc = 0;
-	int param = 0;
+	char param = '0';
 	char *argv[MAX_ARGC] = {0};
 
 	if (arg) {
@@ -659,8 +659,8 @@ void fATBp(void *arg)
 		goto exit;
 	}
 
-	param = atoi(argv[1]);
-	if (param == 1) {
+	param = *argv[1];
+	if (param == '1') {
 		if (bt_command_type(BT_COMMAND_STACK)) {
 			AT_PRINTK("[AT_PRINTK] ERROR: command type error!\n\r");
 			goto exit;
@@ -668,7 +668,7 @@ void fATBp(void *arg)
 		AT_PRINTK("[ATBp]:_AT_BLE_PERIPHERAL_[ON]\n\r");
 		ble_app_init();
 		set_bt_cmd_type(PERIPHERAL_BIT | STACK_BIT);
-	} else if (param == 0) {
+	} else if (param == '0') {
 		if (!bt_command_type(BT_COMMAND_PERIPHERAL)) {
 			AT_PRINTK("[AT_PRINTK] ERROR: command type error!\n\r");
 			goto exit;
@@ -981,7 +981,7 @@ extern void ble_scatternet_app_deinit(void);
 void fATBf(void *arg)
 {
 	int argc = 0;
-	int param = 0;
+	char param = '0';;
 	char *argv[MAX_ARGC] = {0};
 
 	if (arg) {
@@ -995,8 +995,8 @@ void fATBf(void *arg)
 		goto exit;
 	}
 
-	param = atoi(argv[1]);
-	if (param == 1) {
+	param = *argv[1];
+	if (param == '1') {
 		if (bt_command_type(BT_COMMAND_STACK)) {
 			AT_PRINTK("[AT_PRINTK] ERROR: command type error!\n\r");
 			goto exit;
@@ -1004,7 +1004,7 @@ void fATBf(void *arg)
 		AT_PRINTK("[ATBf]:_AT_BLE_SCATTERNET_[ON]\n\r");
 		ble_scatternet_app_init();
 		set_bt_cmd_type(SCATTERNET_BIT | STACK_BIT);
-	} else if (param == 0) {
+	} else if (param == '0') {
 		if (!bt_command_type(BT_COMMAND_SCATTERNET)) {
 			AT_PRINTK("[AT_PRINTK] ERROR: command type error!\n\r");
 			goto exit;
@@ -1030,7 +1030,7 @@ extern void bt_beacon_app_deinit(void);
 void fATBJ(void *arg)
 {
 	int argc = 0;
-	int param = 0;
+	char param = '0';
 	int type = 0;
 	char *argv[MAX_ARGC] = {0};
 
@@ -1045,8 +1045,8 @@ void fATBJ(void *arg)
 		goto exit;
 	}
 
-	param = atoi(argv[1]);
-	if (param == 1 && argc == 3) {
+	param = *argv[1];
+	if (param == '1' && argc == 3) {
 		if (bt_command_type(BT_COMMAND_STACK)) {
 			AT_PRINTK("[AT_PRINTK] ERROR: command type error!\n\r");
 			goto exit;
@@ -1061,7 +1061,7 @@ void fATBJ(void *arg)
 		}
 		bt_beacon_app_init(type);
 		set_bt_cmd_type(BEACON_BIT | STACK_BIT);
-	} else if (param == 0 && argc == 2) {
+	} else if (param == '0' && argc == 2) {
 		if (!bt_command_type(BT_COMMAND_BEACON)) {
 			AT_PRINTK("[AT_PRINTK] ERROR: command type error!\n\r");
 			goto exit;

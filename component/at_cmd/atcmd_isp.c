@@ -293,6 +293,7 @@ void fATIX(void *arg)
 #include "isp_ctrl_api.h"
 #include "ftl_common_api.h"
 void (*uvc_v2)(void) = NULL;
+static int pre_etgain = -1;
 void fATII(void *arg)
 {
 	int i;
@@ -441,14 +442,9 @@ void fATII(void *arg)
 			ae_statis_t ae_result;
 			int ret = isp_get_AE_statis(&ae_result);
 			if (!ret) {
-				printf("fr %d ae win %d \r\n"
-					   , (int)ae_result.frame_count
-					   , (int)ae_result.win_cnt);
-				for (int j = 0; j < 16; j++) {
-					for (int k = 0; k < 16; k++) {
-						dbg_printf("%d ", ae_result.hist[j * 16 + k]);
-					}
-					dbg_printf("\r\n");
+				printf("Value, Count, fr %d\n", (int)ae_result.frame_count);
+				for (int j = 0; j < 256; j++) {
+					printf("[%3d] %5d \n", j, ae_result.hist[j]);
 				}
 			} else {
 				printf("get info fail hal_video_get_AE_statis.\r\n");
@@ -460,28 +456,41 @@ void fATII(void *arg)
 				printf("fr %d awb win %d\r\n"
 					   , (int)awb_result.frame_count
 					   , (int)awb_result.win_cnt);
-#if 0
-				printf("r %d %d g %d %d n %d %d \r\n", \
-					   awb_result.r_mean[119], awb_result.r_mean[136], awb_result.g_mean[119], awb_result.g_mean[136], awb_result.b_mean[119], awb_result.b_mean[136]);
-#else
 				printf("awb rg \r\n");
-				for (int j = 0; j < 16; j += 3) {
-					for (int k = 0; k < 16; k += 3) {
-						dbg_printf("%d ", awb_result.rg[j * 16 + k]);
+				for (int j = 0; j < 16; j++) {
+					for (int k = 0; k < 16; k++) {
+						printf("%5d ", awb_result.rg[j * 16 + k]);
 					}
-					dbg_printf("\r\n");
+					printf("\r\n");
 				}
 				printf("awb bg \r\n");
-				for (int j = 0; j < 16; j += 3) {
-					for (int k = 0; k < 16; k += 3) {
-						dbg_printf("%d ", awb_result.bg[j * 16 + k]);
+				for (int j = 0; j < 16; j++) {
+					for (int k = 0; k < 16; k++) {
+						printf("%5d ", awb_result.bg[j * 16 + k]);
 					}
-					dbg_printf("\r\n");
+					printf("\r\n");
 				}
 
-#endif
 			} else {
 				printf("get info fail hal_video_get_AWB_statis.\r\n");
+			}
+		} else if (strcmp(argv[2], "ae_stable") == 0) {
+			char ifAEStable = ALS_AE_UNSTABLE;
+			int cur_etgain = pre_etgain;
+			ifAEStable = isp_get_ifAEstable(&cur_etgain, 500);
+			printf("ifAEStable=%d, pre_etgain=%d, cur_etgain=%d\r\n", ifAEStable, cur_etgain, pre_etgain);
+			pre_etgain = cur_etgain;
+		} else if (strcmp(argv[2], "ae_weight") == 0) {
+			uint8_t AE_wgt[256];
+			int wgt_size;
+			int ret = isp_get_AE_meter(AE_wgt, &wgt_size);
+			if (!ret) {
+				for (int j = 0; j < 16; j++) {
+					for (int k = 0; k < 16; k++) {
+						printf("%3d ", AE_wgt[j * 16 + k]);
+					}
+					printf("\n");
+				}
 			}
 		}
 		if (strcmp(argv[2], "mipi") == 0) {

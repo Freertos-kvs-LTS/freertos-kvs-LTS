@@ -7,40 +7,32 @@
 #include "mmf2_siso.h"
 
 #include "module_audio.h"
+#include "module_i2s.h"
 #include "module_aad.h"
 #include "module_rtp.h"
 
-static mm_context_t *rtp_ctx		= NULL;
-static mm_context_t *aad_ctx		= NULL;
-static mm_context_t *audio_ctx		= NULL;
+#define I2S_INTERFACE   0
+#define AUDIO_INTERFACE 1
 
-static mm_siso_t *siso_rtp_aad		= NULL;
-static mm_siso_t *siso_aad_audio	= NULL;
+#define AUDIO_SRC AUDIO_INTERFACE
 
-#if !USE_DEFAULT_AUDIO_SET
-static audio_params_t audio_params = {
-#if defined(CONFIG_PLATFORM_8721D)
-	.sample_rate = SR_8K,
-	.word_length = WL_16,
-	.mono_stereo = CH_MONO,
-	// .direction = APP_AMIC_IN|APP_LINE_OUT,
-	.direction = APP_LINE_IN | APP_LINE_OUT,
+#if AUDIO_SRC==AUDIO_INTERFACE
+static mm_context_t *audio_ctx      = NULL;
+static audio_params_t audio_params;
+#elif AUDIO_SRC==I2S_INTERFACE
+static mm_context_t *i2s_ctx        = NULL;
+static i2s_params_t i2s_params;
 #else
-	.sample_rate = ASR_8KHZ,
-	.word_length = WL_16BIT,
-	.mic_gain    = MIC_0DB,
-	.dmic_l_gain    = DMIC_BOOST_24DB,
-	.dmic_r_gain    = DMIC_BOOST_24DB,
-	.use_mic_type   = USE_AUDIO_AMIC,
-	.channel     = 1,
+#error "please set correct AUDIO_SRC"
 #endif
-	.mix_mode = 0,
-	.enable_aec  = 0
-};
-#endif
+static mm_context_t *rtp_ctx        = NULL;
+static mm_context_t *aad_ctx        = NULL;
+
+static mm_siso_t *siso_rtp_aad      = NULL;
+static mm_siso_t *siso_aad_audio    = NULL;
 
 static aad_params_t aad_rtp_params = {
-	.sample_rate = 8000,
+	.sample_rate = 16000,
 	.channel = 1,
 	.trans_type = AAD_TYPE_RTP_RAW,
 	.object_type = AAD_AOT_LC
@@ -78,18 +70,32 @@ void mmf2_example_rtp_aad_init(void)
 		goto mmf2_exmaple_rtp_aad_fail;
 	}
 
+#if AUDIO_SRC==AUDIO_INTERFACE
+	//since the audio module is only a sink in this example, the output queue is not needed in this example
 	audio_ctx = mm_module_open(&audio_module);
 	if (audio_ctx) {
-#if !USE_DEFAULT_AUDIO_SET
+		mm_module_ctrl(audio_ctx, CMD_AUDIO_GET_PARAMS, (int)&audio_params);
+		audio_params.sample_rate = ASR_16KHZ;
 		mm_module_ctrl(audio_ctx, CMD_AUDIO_SET_PARAMS, (int)&audio_params);
-#endif
-		//mm_module_ctrl(audio_ctx, MM_CMD_SET_QUEUE_LEN, 6);
-		//mm_module_ctrl(audio_ctx, MM_CMD_INIT_QUEUE_ITEMS, MMQI_FLAG_STATIC);
 		mm_module_ctrl(audio_ctx, CMD_AUDIO_APPLY, 0);
 	} else {
-		rt_printf("audio open fail\n\r");
+		printf("audio open fail\n\r");
 		goto mmf2_exmaple_rtp_aad_fail;
 	}
+#elif AUDIO_SRC==I2S_INTERFACE
+	//since the i2s module is only a sink in this example, the output queue is not needed in this example
+	i2s_ctx = mm_module_open(&i2s_module);
+	if (i2s_ctx) {
+		mm_module_ctrl(i2s_ctx, CMD_I2S_GET_PARAMS, (int)&i2s_params);
+		i2s_params.sample_rate = SR_16KHZ;
+		i2s_params.i2s_direction = I2S_TX_ONLY;
+		mm_module_ctrl(i2s_ctx, CMD_I2S_SET_PARAMS, (int)&i2s_params);
+		mm_module_ctrl(i2s_ctx, CMD_I2S_APPLY, 0);
+	} else {
+		printf("i2s open fail\n\r");
+		goto mmf2_exmaple_rtp_aad_fail;
+	}
+#endif
 
 	siso_rtp_aad = siso_create();
 	if (siso_rtp_aad) {
@@ -107,7 +113,11 @@ void mmf2_example_rtp_aad_init(void)
 	siso_rtp_aad = siso_create();
 	if (siso_rtp_aad) {
 		siso_ctrl(siso_rtp_aad, MMIC_CMD_ADD_INPUT, (uint32_t)aad_ctx, 0);
+#if AUDIO_SRC==AUDIO_INTERFACE
 		siso_ctrl(siso_rtp_aad, MMIC_CMD_ADD_OUTPUT, (uint32_t)audio_ctx, 0);
+#elif AUDIO_SRC==I2S_INTERFACE
+		siso_ctrl(siso_rtp_aad, MMIC_CMD_ADD_OUTPUT, (uint32_t)i2s_ctx, 0);
+#endif
 		siso_start(siso_rtp_aad);
 	} else {
 		rt_printf("siso2 open fail\n\r");

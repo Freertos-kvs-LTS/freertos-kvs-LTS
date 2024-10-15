@@ -1115,6 +1115,13 @@ int wifi_set_dhcp_offload(void);
 #endif
 
 
+/**
+ * @brief  wakeup from wowlan by receiving any unicast packet
+ *
+ * @param[in]  enable : enable unicast wakeup
+ */
+void wifi_set_unicast_wakeup(u8 enable);
+
 
 #if defined CONFIG_ARP_KEEP_ALIVE || defined __DOXYGEN__
 /**
@@ -1223,7 +1230,8 @@ int wifi_wowlan_set_bcn_track(u8  start_window,
  * @param[in]   start_window : start window size with tbtt
  * @param[in]   max_window : max window size with tbtt
  * @param[in]   increment_steps : window size increment steps with tbtt
- * @param[in]   period : active scan period
+ * @param[in]   passive_cnt : passive scan count
+ * @param[in]   active_cnt : active scan count
  * @param[in]   duration : pno scan duration
  * @param[in]   interval_time : a set of scan period
  * @return  RTW_SUCCESS
@@ -1231,7 +1239,8 @@ int wifi_wowlan_set_bcn_track(u8  start_window,
 int wifi_wowlan_set_pno_scan(u8  start_window,
 							 u8  max_window,
 							 u8  increment_steps,
-							 u8  scan_period,
+							 u8  passive_cnt,
+							 u8  active_cnt,
 							 u32 duration,
 							 u8  interval_time);
 #endif
@@ -1365,6 +1374,35 @@ int wifi_set_ra_1st_fallback_step(unsigned char step);
  * 	Otherwise, return 1.
  */
 int wifi_get_sta_avg_data_rate(OUT unsigned char *avg_rate);
+
+/**
+ * @brief  Get router wps information about manufacturer/model name/model number
+ * @param[in]  assoc_AP_manufacturer/assoc_AP_model_name/assoc_AP_model_number: can be get the router wps information
+ * @return  If the function succeeds, the return value is 0.
+ * 	Otherwise, return 1.
+ * @Example:
+ * u8 router_manufacturer[65] = {0};
+ * u8 router_model_name[33] = {0};
+ * u8 router_model_number[33] = {0};
+ * wifi_get_router_wps_info((u8 *)router_manufacturer, (u8 *)router_model_name, (u8 *)router_model_number);
+ */
+int wifi_get_router_wps_info(u8 *assoc_AP_manufacturer, u8 *assoc_AP_model_name, u8 *assoc_AP_model_number);
+
+/**
+ * @brief  set country_code
+ * @param[out]  country_code: A pointer to the variable where the
+ * 	country_code will be written.
+ * @return  RTW_SUCCESS or RTW ERROR.
+ */
+int wifi_set_country_code(const char *country_code);
+
+/**
+ * @brief  set channel_plan
+ * @param[out]  channel_plan: The variable where the
+ * 	channel_plan will be written.
+ * @return  RTW_SUCCESS or RTW ERROR.
+ */
+int wifi_set_channel_plan(u8 channel_plan);
 
 /**
  * @brief  issue nulldata frame

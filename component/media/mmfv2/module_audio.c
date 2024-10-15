@@ -19,8 +19,6 @@
 #include "avcodec.h"
 
 #define AUDIO_DROP_NUM  2
-#define AUDIO_TX_MASK   0x01
-#define AUDIO_RX_MASK   0x02
 //------------------------------------------------------------------------------
 #if IS_CUT_TEST(CONFIG_CHIP_VER)
 #define DMIC_CLK_PIN    PE_2 //PE_0
@@ -241,9 +239,9 @@ static void audio_tx_complete(uint32_t arg, uint8_t *pbuf)
 	memcpy(last_pretx_buf, pcm_tx_cache[0].txbuf.tx_pcm, AUDIO_DMA_PAGE_SIZE);
 #endif
 #if defined(TXAGC_IRQ) && TXAGC_IRQ
-	if (ctx->params.sample_rate == ASR_8KHZ || ctx->params.sample_rate == ASR_16KHZ) {
+	if (ctx->sample_rate == 8000 || ctx->sample_rate == 16000) {
 		if ((ctx->inited_agc & AUDIO_TX_MASK) && (ctx->run_agc & AUDIO_TX_MASK) && (ATAF_AGC_CTRL & AUDIO_TX_MASK)) {
-			AGC_process(AUDIO_DMA_PAGE_SIZE / sizeof(int16_t), (int16_t *)(ptx_buf));
+			RCV_AGC_process(AUDIO_DMA_PAGE_SIZE / sizeof(int16_t), (int16_t *)(ptx_buf));
 		}
 	}
 #endif
@@ -308,7 +306,7 @@ static void audio_rx_complete(uint32_t arg, uint8_t *pbuf)
 	ptx_addre = audio_get_tx_page_adr(obj);
 	memcpy((void *)ptx_addre, (void *)pbuf, TX_PAGE_SIZE);
 	audio_set_tx_page(obj, ptx_addre);
-	if (ctx->params.use_mic_type == USE_AUDIO_STEREO_DMIC) {
+	if (ctx->mic_type == USE_AUDIO_STEREO_DMIC) {
 		memcpy((void *)(dma_rxdata_buf_lr + rx_index), (void *)pbuf, RX_PAGE_SIZE);
 		rx_index += RX_PAGE_SIZE;
 		if (rx_index == RX_PAGE_SIZE * 2) {
@@ -381,7 +379,7 @@ static void audio_rx_complete(uint32_t arg, uint8_t *pbuf)
 
 	if (pcm_rx_cache) {
 		BaseType_t xHigherPriorityTaskWoken_AEC = pdFALSE;
-		if (ctx->params.use_mic_type == USE_AUDIO_STEREO_DMIC) {
+		if (ctx->mic_type == USE_AUDIO_STEREO_DMIC) {
 			int16_t *stereo_rx_data_l = (int16_t *)(rx_irq_buf.pcm_data + rx_index);
 			int16_t *stereo_rx_data_r = (int16_t *)(rx_irq_buf.pcm_data + AUDIO_DMA_PAGE_SIZE + rx_index);
 			int16_t *stereo_rx_data_lr = (int16_t *) pbuf;
@@ -416,7 +414,7 @@ static void audio_rx_complete(uint32_t arg, uint8_t *pbuf)
 			last_rx_ts = audio_rx_ts;
 			rx_irq_buf.timestamp = audio_rx_ts;
 			rx_irq_buf.hw_timestamp = rx_ts;
-			if (ctx->params.use_mic_type == USE_AUDIO_RIGHT_DMIC) {
+			if (ctx->mic_type == USE_AUDIO_RIGHT_DMIC) {
 				memcpy((void *)(rx_irq_buf.pcm_data + AUDIO_DMA_PAGE_SIZE), (void *)pbuf, RX_PAGE_SIZE);
 				if (ctx->right_mic_cb) {
 					ctx->right_mic_cb((const uint8_t *)pbuf, AUDIO_DMA_PAGE_SIZE, ctx->word_length, ctx->sample_rate, ctx->params);
@@ -443,14 +441,13 @@ static void audio_rx_complete(uint32_t arg, uint8_t *pbuf)
 
 		mm_context_t *mctx = (mm_context_t *)ctx->parent;
 		mm_queue_item_t *output_item;
-		if (ctx->params.use_mic_type == USE_AUDIO_STEREO_DMIC) {
+		if (ctx->mic_type == USE_AUDIO_STEREO_DMIC) {
 			memcpy((void *)(dma_rxdata_buf_lr + rx_index), (void *)pbuf, RX_PAGE_SIZE);
 			rx_index += RX_PAGE_SIZE;
 			if (rx_index == RX_PAGE_SIZE * 2) {
 				//send the 20ms l_r data to rx buf
 				memcpy((void *)dma_rxdata_buf_lr, (void *)pbuf, RX_PAGE_SIZE);
 				if (mctx->output_recycle && (xQueueReceiveFromISR(mctx->output_recycle, &output_item, &xTaskWokenByReceive) == pdTRUE)) {
-					//memcpy((void *)output_item->data_addr, (void *)dma_rxdata_buf_lr, RX_PAGE_SIZE * 2);
 					int16_t *ptx_addre = (int16_t *)output_item->data_addr;
 					int16_t *rx_data_lr = (int16_t *)dma_rxdata_buf_lr;
 					//use merge the two channel data
@@ -477,10 +474,10 @@ static void audio_rx_complete(uint32_t arg, uint8_t *pbuf)
 			memcpy((void *)dma_rxdata_buf_lr, (void *)pbuf, RX_PAGE_SIZE);
 			if (mctx->output_recycle && (xQueueReceiveFromISR(mctx->output_recycle, &output_item, &xTaskWokenByReceive) == pdTRUE)) {
 				memcpy((void *)output_item->data_addr, (void *)dma_rxdata_buf_lr, RX_PAGE_SIZE);
-				if ((ctx->params.use_mic_type == USE_AUDIO_LEFT_DMIC || ctx->params.use_mic_type == USE_AUDIO_AMIC) && ctx->left_mic_cb) {
+				if ((ctx->mic_type == USE_AUDIO_LEFT_DMIC || ctx->mic_type == USE_AUDIO_AMIC) && ctx->left_mic_cb) {
 					ctx->left_mic_cb((const uint8_t *)dma_rxdata_buf_lr, AUDIO_DMA_PAGE_SIZE, ctx->word_length, ctx->sample_rate, ctx->params);
 				}
-				if (ctx->params.use_mic_type == USE_AUDIO_RIGHT_DMIC && ctx->right_mic_cb) {
+				if (ctx->mic_type == USE_AUDIO_RIGHT_DMIC && ctx->right_mic_cb) {
 					ctx->right_mic_cb((const uint8_t *)dma_rxdata_buf_lr, AUDIO_DMA_PAGE_SIZE, ctx->word_length, ctx->sample_rate, ctx->params);
 				}
 				output_item->size = RX_PAGE_SIZE;
@@ -599,29 +596,36 @@ static void audio_rx_asp_init(void *p, int sampleRate)
 	audio_ctx_t *ctx = (audio_ctx_t *)p;
 #if defined(CONFIG_NEWAEC) && CONFIG_NEWAEC
 	if (!(ctx->inited_rxasp) && (ctx->rxcfg.aec_cfg.AEC_EN || ctx->rxcfg.agc_cfg.AGC_EN || ctx->rxcfg.ns_cfg.NS_EN)) {
-		AEC_init(FRAMESIZE, sampleRate, &(ctx->rxcfg.aec_cfg), &(ctx->rxcfg.agc_cfg), &(ctx->rxcfg.ns_cfg), 1.0f);
-		AEC_set_runtime_en(ctx->run_aec);
+		//AEC_init(FRAMESIZE, sampleRate, &(ctx->rxcfg.aec_cfg), &(ctx->rxcfg.agc_cfg), &(ctx->rxcfg.ns_cfg), 1.0f);
+		int16_t mic_num = 1;
+		if (ctx->mic_type == USE_AUDIO_STEREO_DMIC) {
+			mic_num = 2;
+		}
+		VQE_SND_init(FRAMESIZE, sampleRate, &(ctx->rxcfg.aec_cfg), &(ctx->rxcfg.agc_cfg), &(ctx->rxcfg.ns_cfg), &(ctx->rxcfg.bf_cfg), NULL, NULL, 1.0f, mic_num);
+		VQE_SND_set_AEC_runtime_en(ctx->run_aec);
+		VQE_SND_set_AGC_runtime_en(ctx->run_agc & AUDIO_RX_MASK);
+		VQE_SND_set_NS_level(((ctx->run_ns & AUDIO_RX_MASK) ? ctx->rxcfg.ns_cfg.NSLevel : 0), &(ctx->rxcfg.ns_cfg));
 		ctx->inited_rxasp = 1;
 		ctx->run_rxasp = 1;
 		AUDIO_DBG_INFO("set MIC AEC level = %d, sdelay = %d\r\n", ctx->rxcfg.aec_cfg.PPLevel, ctx->rxcfg.aec_cfg.EchoTailLen);
 	}
 #else
 	if ((ctx->inited_aec == 0) && ctx->rxcfg.aec_cfg.AEC_EN) {
-		AEC_init(FRAMESIZE, sampleRate, &(ctx->rxcfg.aec_cfg), 1.0f);
+		Webrtc_SND_init(FRAMESIZE, sampleRate, &(ctx->rxcfg.aec_cfg), 1.0f);
 		ctx->inited_aec = 1;
 		ctx->run_aec = 1;
 		AUDIO_DBG_INFO("set MIC AEC level = %d, sdelay = %d\r\n", ctx->rxcfg.aec_cfg.AECLevel, ctx->rxcfg.aec_cfg.FilterLength);
 	}
 
 	if (!(ctx->inited_ns & AUDIO_RX_MASK) && ctx->rxcfg.ns_cfg.NS_EN) {
-		NS2_init(sampleRate, &(ctx->rxcfg.ns_cfg));
+		Webrtc_SND_NS_init(sampleRate, &(ctx->rxcfg.ns_cfg));
 		ctx->inited_ns |= AUDIO_RX_MASK;
 		ctx->run_ns |= AUDIO_RX_MASK;
 		AUDIO_DBG_INFO("Set MIC NS level %d\r\n", ctx->rxcfg.ns_cfg.NSLevel);
 	}
 
 	if (!(ctx->inited_agc & AUDIO_RX_MASK) && ctx->rxcfg.agc_cfg.AGC_EN) {
-		AGC2_init(sampleRate, &(ctx->rxcfg.agc_cfg));
+		Webrtc_SND_AGC_init(sampleRate, &(ctx->rxcfg.agc_cfg));
 		ctx->inited_agc |= AUDIO_RX_MASK;
 		ctx->run_agc |= AUDIO_RX_MASK;
 		AUDIO_DBG_INFO("Set MIC AGC %d,%d,%d,%d\r\n", ctx->rxcfg.agc_cfg.AGCMode, ctx->rxcfg.agc_cfg.TargetLevelDbfs, ctx->rxcfg.agc_cfg.CompressionGaindB,
@@ -629,7 +633,7 @@ static void audio_rx_asp_init(void *p, int sampleRate)
 	}
 
 	if ((ctx->inited_vad == 0) && ctx->rxcfg.vad_cfg.VAD_EN) {
-		VAD_init(sampleRate, &(ctx->rxcfg.vad_cfg));
+		Webrtc_SND_VAD_init(sampleRate, &(ctx->rxcfg.vad_cfg));
 		ctx->inited_vad = 1;
 		ctx->run_vad = 1;
 	}
@@ -641,27 +645,27 @@ static void audio_rx_asp_deinit(void *p)
 	audio_ctx_t *ctx = (audio_ctx_t *)p;
 #if defined(CONFIG_NEWAEC) && CONFIG_NEWAEC
 	if (ctx->inited_rxasp) {
-		AEC_destory();
+		VQE_SND_destroy();
 	}
 	ctx->inited_rxasp = 0;
 #else
 	if (ctx->inited_ns & AUDIO_RX_MASK) {
-		NS2_destory();
+		Webrtc_SND_NS_destroy();
 	}
 	ctx->inited_ns &= ~(AUDIO_RX_MASK);
 
 	if (ctx->inited_agc & AUDIO_RX_MASK) {
-		AGC2_destory();
+		Webrtc_SND_AGC_destroy();
 	}
 	ctx->inited_agc &= ~(AUDIO_RX_MASK);
 
 	if (ctx->inited_aec) {
-		AEC_destory();
+		Webrtc_SND_destroy();
 	}
 	ctx->inited_aec = 0;
 
 	if (ctx->inited_vad) {
-		VAD_destory();
+		Webrtc_SND_VAD_destroy();
 	}
 	ctx->inited_vad = 0;
 #endif
@@ -670,37 +674,41 @@ static void audio_rx_asp_deinit(void *p)
 static void audio_tx_asp_init(void *p, int sampleRate)
 {
 	audio_ctx_t *ctx = (audio_ctx_t *)p;
+	ctx->inited_txasp = 1;
 #if defined(CONFIG_NEWAEC) && CONFIG_NEWAEC
 	if (!(ctx->inited_ns & AUDIO_TX_MASK) && ctx->txcfg.ns_cfg.NS_EN) {
-		NS_init(sampleRate, &(ctx->txcfg.ns_cfg));
+		VQE_RCV_NS_init(sampleRate, &(ctx->txcfg.ns_cfg));
 		ctx->inited_ns |= AUDIO_TX_MASK;
-		ctx->run_ns |= AUDIO_TX_MASK;
+		//ctx->run_ns |= AUDIO_TX_MASK;
+		VQE_RCV_set_NS_level(((ctx->run_ns & AUDIO_TX_MASK) ? ctx->txcfg.ns_cfg.NSLevel : 0), &(ctx->txcfg.ns_cfg));
 		AUDIO_DBG_INFO("Set Speaker NS level %d\r\n", ctx->txcfg.ns_cfg.NSLevel);
 	}
 
 	if (!(ctx->inited_agc & AUDIO_TX_MASK) && ctx->txcfg.agc_cfg.AGC_EN) {
-		AGC_init(sampleRate, &(ctx->txcfg.agc_cfg));
+		VQE_RCV_AGC_init(sampleRate, &(ctx->txcfg.agc_cfg));
 		ctx->inited_agc |= AUDIO_TX_MASK;
-		ctx->run_agc |= AUDIO_TX_MASK;
+		//ctx->run_agc |= AUDIO_TX_MASK;
+		VQE_RCV_set_AGC_runtime_en(ctx->run_agc & AUDIO_TX_MASK);
 		AUDIO_DBG_INFO("set Speaker AGC %d,%d,%d,%d\r\n", ctx->txcfg.agc_cfg.ReferenceLvl, ctx->txcfg.agc_cfg.RatioFormat, ctx->txcfg.agc_cfg.AttackTime,
 					   ctx->txcfg.agc_cfg.ReleaseTime);
 	}
 #else
 	if (!(ctx->inited_ns & AUDIO_TX_MASK) && ctx->txcfg.ns_cfg.NS_EN) {
-		NS_init(sampleRate, &(ctx->txcfg.ns_cfg));
+		Webrtc_RCV_NS_init(sampleRate, &(ctx->txcfg.ns_cfg));
 		ctx->inited_ns |= AUDIO_TX_MASK;
 		ctx->run_ns |= AUDIO_TX_MASK;
 		AUDIO_DBG_INFO("Set Speaker NS level %d\r\n", ctx->txcfg.ns_cfg.NSLevel);
 	}
 
 	if (!(ctx->inited_agc & AUDIO_TX_MASK) && ctx->txcfg.agc_cfg.AGC_EN) {
-		AGC_init(sampleRate, &(ctx->txcfg.agc_cfg));
+		Webrtc_RCV_AGC_init(sampleRate, &(ctx->txcfg.agc_cfg));
 		ctx->inited_agc |= AUDIO_TX_MASK;
 		ctx->run_agc |= AUDIO_TX_MASK;
 		AUDIO_DBG_INFO("Set Speaker AGC %d,%d,%d,%d\r\n", ctx->txcfg.agc_cfg.AGCMode, ctx->txcfg.agc_cfg.TargetLevelDbfs, ctx->txcfg.agc_cfg.CompressionGaindB,
 					   ctx->txcfg.agc_cfg.LimiterEnable);
 	}
 #endif
+	ctx->run_txasp = 1;
 }
 
 static void audio_tx_asp_deinit(void *p)
@@ -708,25 +716,26 @@ static void audio_tx_asp_deinit(void *p)
 	audio_ctx_t *ctx = (audio_ctx_t *)p;
 #if defined(CONFIG_NEWAEC) && CONFIG_NEWAEC
 	if (ctx->inited_ns & AUDIO_TX_MASK) {
-		NS_destory();
+		VQE_RCV_NS_destroy();
 	}
 	ctx->inited_ns = 0;
 
 	if (ctx->inited_agc & AUDIO_TX_MASK) {
-		AGC_destory();
+		VQE_RCV_AGC_destroy();
 	}
 	ctx->inited_agc = 0;
 #else
 	if (ctx->inited_ns & AUDIO_TX_MASK) {
-		NS_destory();
+		Webrtc_RCV_NS_destroy();
 	}
 	ctx->inited_ns &= ~(AUDIO_TX_MASK);
 
 	if (ctx->inited_agc & AUDIO_TX_MASK) {
-		AGC_destory();
+		Webrtc_RCV_AGC_destroy();
 	}
 	ctx->inited_agc &= ~(AUDIO_TX_MASK);
 #endif
+	ctx->inited_txasp = 0;
 }
 
 static void audio_rx_handle_thread(void *param)
@@ -736,13 +745,12 @@ static void audio_rx_handle_thread(void *param)
 	mm_queue_item_t *output_item;
 
 #if ENABLE_ASP==1
-	if (ctx->params.sample_rate == ASR_8KHZ || ctx->params.sample_rate == ASR_16KHZ) {
-		int sampleRate = audio_get_samplerate(ctx->params.sample_rate);
+	if (ctx->sample_rate == 8000 || ctx->sample_rate == 16000) {
 
-		AUDIO_DBG_INFO("sample rate: %d \r\n", sampleRate);
+		AUDIO_DBG_INFO("sample rate: %d \r\n", ctx->sample_rate);
 		AUDIO_DBG_INFO("frame size = %d, DMAsize = %d\r\n", AUDIO_AEC_PAGE_SIZE, AUDIO_DMA_PAGE_SIZE);
 
-		audio_rx_asp_init(ctx, sampleRate);
+		audio_rx_asp_init(ctx, ctx->sample_rate);
 	}
 #endif
 	while (1) {
@@ -764,14 +772,17 @@ static void audio_rx_handle_thread(void *param)
 
 		uint8_t *dma_rxdata_buf_l = (uint8_t *)proc_rx_buf.pcm_data;
 		uint8_t *dma_rxdata_buf_r = (uint8_t *)(proc_rx_buf.pcm_data + AUDIO_DMA_PAGE_SIZE);
-		uint8_t *dma_rxdata_proc_buf;
+		uint8_t *dma_rxdata_proc_buf, *dma_rxdata_sub_buf;
 		// use left mic data to do process in stereo mic signal, will modify after stereo signal process is ready
-		if (ctx->params.use_mic_type == USE_AUDIO_STEREO_DMIC) {
+		if (ctx->mic_type == USE_AUDIO_STEREO_DMIC) {
 			dma_rxdata_proc_buf = dma_rxdata_buf_l;
-		} else if (ctx->params.use_mic_type == USE_AUDIO_RIGHT_DMIC) {
+			dma_rxdata_sub_buf = dma_rxdata_buf_r;
+		} else if (ctx->mic_type == USE_AUDIO_RIGHT_DMIC) {
 			dma_rxdata_proc_buf = dma_rxdata_buf_r;
+			dma_rxdata_sub_buf = dma_rxdata_buf_l;
 		} else { //USE_AUDIO_LEFT_DMIC or USE_AUDIO_AMIC
 			dma_rxdata_proc_buf = dma_rxdata_buf_l;
+			dma_rxdata_sub_buf = dma_rxdata_buf_r;
 		}
 		//uint32_t audio_rx_ts = proc_rx_buf.timestamp;
 		//uint32_t audio_rx_ts = mm_read_mediatime_ms();
@@ -811,41 +822,42 @@ static void audio_rx_handle_thread(void *param)
 #if ENABLE_ASP==1
 			//If the RX is too old for the TX (set to copy flow)
 			//AUDIO_DBG_INFO("proc_rx_ts = %d, proc_tx_ts = %d\r\n", proc_rx_buf.timestamp, proc_tx_ts);
-			if (ctx->params.sample_rate == ASR_8KHZ || ctx->params.sample_rate == ASR_16KHZ) {
+			if (ctx->sample_rate == 8000 || ctx->sample_rate == 16000) {
 				int i = 0;
 #if defined(CONFIG_NEWAEC) && CONFIG_NEWAEC
 				// if the rx timestamp is before tx, disable AEC (but enable NS)
 				if ((proc_rx_buf.timestamp + 40) <= proc_tx_ts) {
-					AEC_set_runtime_en(0);
+					VQE_SND_set_AEC_runtime_en(0);
 				}
 				if (ctx->inited_rxasp && ctx->run_rxasp && ATAF_AEC_CTRL) {
 					for (i = 0; i < AUDIO_DMA_PAGE_SIZE; i += AUDIO_AEC_PAGE_SIZE) {
-						AEC_process((int16_t *)(proc_tx_buf + i), (int16_t *)(dma_rxdata_proc_buf + i), (int16_t *)(output_item->data_addr + i));
+						//AEC_process((int16_t *)(proc_tx_buf + i), (int16_t *)(dma_rxdata_proc_buf + i), (int16_t *)(output_item->data_addr + i));
+						SND_process((int16_t *)(proc_tx_buf + i), (int16_t *)(dma_rxdata_proc_buf + i), (int16_t *)(dma_rxdata_sub_buf + i), (int16_t *)(output_item->data_addr + i));
 					}
 				} else {
 					memcpy((int16_t *)output_item->data_addr, (int16_t *)(dma_rxdata_proc_buf), AUDIO_DMA_PAGE_SIZE);
 				}
 				// reset the AEC configuration
 				if ((proc_rx_buf.timestamp + 40) <= proc_tx_ts) {
-					AEC_set_runtime_en(ctx->run_aec);
+					VQE_SND_set_AEC_runtime_en(ctx->run_aec);
 				}
 #else
 				if (ctx->inited_aec && ctx->run_aec && ATAF_AEC_CTRL) {
 					for (i = 0; i < AUDIO_DMA_PAGE_SIZE; i += AUDIO_AEC_PAGE_SIZE) {
-						AEC_process((int16_t *)(proc_tx_buf + i), (int16_t *)(dma_rxdata_proc_buf + i), (int16_t *)(output_item->data_addr + i));
+						SND_process((int16_t *)(proc_tx_buf + i), (int16_t *)(dma_rxdata_proc_buf + i), (int16_t *)(output_item->data_addr + i));
 					}
 				} else {
 					memcpy((int16_t *)output_item->data_addr, (int16_t *)(dma_rxdata_proc_buf), AUDIO_DMA_PAGE_SIZE);
 				}
 				if ((ctx->inited_ns & AUDIO_RX_MASK) && (ctx->run_ns & AUDIO_RX_MASK) && (ATAF_NS_CTRL & AUDIO_RX_MASK)) {
-					NS2_process(AUDIO_DMA_PAGE_SIZE / sizeof(int16_t), (int16_t *)output_item->data_addr);
+					SND_NS_process(AUDIO_DMA_PAGE_SIZE / sizeof(int16_t), (int16_t *)output_item->data_addr);
 				}
 
 				if ((ctx->inited_agc & AUDIO_RX_MASK) && (ctx->run_agc & AUDIO_RX_MASK) && (ATAF_AGC_CTRL & AUDIO_RX_MASK)) {
-					AGC2_process(AUDIO_DMA_PAGE_SIZE / sizeof(int16_t), (int16_t *)(output_item->data_addr));
+					SND_AGC_process(AUDIO_DMA_PAGE_SIZE / sizeof(int16_t), (int16_t *)(output_item->data_addr));
 				}
 				if (ctx->inited_vad && ctx->run_vad && (ATAF_VAD_CTRL)) {
-					int vad_state = VAD_process(AUDIO_DMA_PAGE_SIZE / sizeof(int16_t), (int16_t *)output_item->data_addr);
+					int vad_state = SND_VAD_process(AUDIO_DMA_PAGE_SIZE / sizeof(int16_t), (int16_t *)output_item->data_addr);
 					if (vad_state == 0) {
 						audio_fade_signal(FADE_OUT, (int16_t *)output_item->data_addr, AUDIO_DMA_PAGE_SIZE / sizeof(int16_t));
 					} else {
@@ -959,7 +971,7 @@ static void set_audio_miceq(void *p)
 	int adc_rclk_en = 0;
 	//Disable the ADC CLK to prevent the EQ setting error
 	audio_adc_clk(ctx->audio, adc_lclk_en, adc_rclk_en);
-	if (ctx->params.use_mic_type == USE_AUDIO_LEFT_DMIC || ctx->params.use_mic_type == USE_AUDIO_STEREO_DMIC || ctx->params.use_mic_type == USE_AUDIO_AMIC) {
+	if (ctx->mic_type == USE_AUDIO_LEFT_DMIC || ctx->mic_type == USE_AUDIO_STEREO_DMIC || ctx->mic_type == USE_AUDIO_AMIC) {
 		AUDIO_DBG_INFO("left digital mic or analog mic set\r\n");
 		for (uint32_t j = 0; j < 5; j++) {
 			if (ctx->params.mic_l_eq[j].eq_enable) {
@@ -975,7 +987,7 @@ static void set_audio_miceq(void *p)
 		adc_lclk_en = 1;
 	}
 
-	if (ctx->params.use_mic_type == USE_AUDIO_RIGHT_DMIC || ctx->params.use_mic_type == USE_AUDIO_STEREO_DMIC) {
+	if (ctx->mic_type == USE_AUDIO_RIGHT_DMIC || ctx->mic_type == USE_AUDIO_STEREO_DMIC) {
 		AUDIO_DBG_INFO("right digital dmic set\r\n");
 		for (uint32_t j = 0; j < 5; j++) {
 			if (ctx->params.mic_r_eq[j].eq_enable) {
@@ -1043,6 +1055,7 @@ static int set_audio_codec_init(void *p)
 			AUDIO_DBG_ERROR("unsupported MIC type \r\n");
 			return -1;
 		}
+		ctx->mic_type = ctx->params.use_mic_type;
 		ctx->audio_inited = 1;
 		//audio_headphone_analog_mute(ctx->audio, 1);
 		audio_set_dma_buffer(ctx->audio, dma_txdata, dma_rxdata, AUDIO_DMA_PAGE_SIZE, AUDIO_DMA_PAGE_NUM);
@@ -1056,13 +1069,13 @@ static int set_audio_codec_init(void *p)
 		audio_err_irq_handler(ctx->audio, audio_err_callback, (uint32_t *)ctx);
 
 		ctx->sample_rate = audio_get_samplerate(ctx->params.sample_rate);
-		AUDIO_DBG_INFO("sample rate = %d, %d\r\n", ctx->params.sample_rate, audio_get_samplerate(ctx->params.sample_rate));
+		AUDIO_DBG_INFO("sample rate = %d, %d\r\n", ctx->params.sample_rate, ctx->sample_rate);
 		if (ctx->params.word_length == WL_16BIT) {
 			ctx->word_length = 2;
 		} else if (ctx->params.word_length == WL_24BIT) {
 			ctx->word_length = 3;
 		}
-		if (ctx->params.use_mic_type == USE_AUDIO_STEREO_DMIC) {
+		if (ctx->mic_type == USE_AUDIO_STEREO_DMIC) {
 			audio_set_param_adv(ctx->audio, ctx->params.sample_rate, ctx->params.word_length, A_MONO, A_STEREO);
 		} else {
 			audio_set_param_adv(ctx->audio, ctx->params.sample_rate, ctx->params.word_length, A_MONO, A_MONO);
@@ -1088,19 +1101,19 @@ static int set_audio_codec_init(void *p)
 		//Set up speaker eq;
 		set_audio_spkeq(ctx);
 
-		if (ctx->params.use_mic_type == USE_AUDIO_AMIC) { // AMIC
+		if (ctx->mic_type == USE_AUDIO_AMIC) { // AMIC
 			audio_mic_bias_ctrl(ctx->audio, 1, ctx->params.mic_bias);
 			audio_mic_analog_gain(ctx->audio, 1, ctx->params.mic_gain);
 			AUDIO_DBG_INFO("set AMIC bias = %d, gain = %d\r\n", ctx->params.mic_bias, ctx->params.mic_gain);
-		} else if (ctx->params.use_mic_type == USE_AUDIO_LEFT_DMIC) { // LEFT DMIC
+		} else if (ctx->mic_type == USE_AUDIO_LEFT_DMIC) { // LEFT DMIC
 			audio_mic_analog_gain(ctx->audio, 1, ctx->params.mic_gain);
 			audio_l_dmic_gain(ctx->audio, ctx->params.dmic_l_gain);
 			AUDIO_DBG_INFO("set LEFT DMIC gain = %d\r\n", ctx->params.dmic_l_gain);
-		} else if (ctx->params.use_mic_type == USE_AUDIO_RIGHT_DMIC) { // RIGHT DMIC
+		} else if (ctx->mic_type == USE_AUDIO_RIGHT_DMIC) { // RIGHT DMIC
 			audio_mic_analog_gain(ctx->audio, 1, ctx->params.mic_gain);
 			audio_r_dmic_gain(ctx->audio, ctx->params.dmic_r_gain);
 			AUDIO_DBG_INFO("set RIGHT DMIC gain = %d\r\n", ctx->params.dmic_r_gain);
-		} else if (ctx->params.use_mic_type == USE_AUDIO_STEREO_DMIC) { // STEREO DMIC
+		} else if (ctx->mic_type == USE_AUDIO_STEREO_DMIC) { // STEREO DMIC
 			audio_mic_analog_gain(ctx->audio, 1, ctx->params.mic_gain);
 			audio_l_dmic_gain(ctx->audio, ctx->params.dmic_l_gain);
 			audio_r_dmic_gain(ctx->audio, ctx->params.dmic_r_gain);
@@ -1155,7 +1168,6 @@ static void set_audio_dev_deinit(void *p, int sample_rate)
 int audio_control(void *p, int cmd, int arg)
 {
 	audio_ctx_t *ctx = (audio_ctx_t *)p;
-	int sample_rate = 8000;
 	switch (cmd) {
 	case CMD_AUDIO_SET_ADC_GAIN:
 		ctx->params.ADC_gain = arg;
@@ -1195,6 +1207,17 @@ int audio_control(void *p, int cmd, int arg)
 		AUDIO_DBG_INFO("AEC Enable: %d.\r\n", arg);
 		ctx->rxcfg.aec_cfg.AEC_EN = 1;
 		break;
+#if defined(CONFIG_NEWAEC) && CONFIG_NEWAEC
+	case CMD_AUDIO_SET_AEC_MODE:
+		AUDIO_DBG_INFO("AEC MODE: %d.\r\n", arg);
+		VQE_SND_set_AEC_cancelmode(arg);
+		break;
+	case CMD_AUDIO_GET_AEC_MODE: {
+		uint8_t *aec_mode = (uint8_t *)(arg);
+		*aec_mode = VQE_SND_get_AEC_cancelmode();
+	}
+	break;
+#endif
 	case CMD_AUDIO_SET_AGC_ENABLE:
 		if (arg > 3 || arg < 0)	{
 			arg = 0;
@@ -1244,13 +1267,14 @@ int audio_control(void *p, int cmd, int arg)
 		if (arg > 3 || arg < 0)	{
 			arg = 0;
 		}
-#if defined(CONFIG_NEWAEC) && CONFIG_NEWAEC
-		ctx->rxcfg.ns_cfg.NS_EN = arg | AUDIO_RX_MASK;
-		ctx->txcfg.ns_cfg.NS_EN = arg | AUDIO_TX_MASK;
-		NS_set_level_for_AEC(ctx->rxcfg.ns_cfg.NSLevel, &(ctx->rxcfg.ns_cfg));
-		NS_set_level_for_TX(ctx->txcfg.ns_cfg.NSLevel, &(ctx->txcfg.ns_cfg));
-#else
 		ctx->run_ns = arg;
+#if defined(CONFIG_NEWAEC) && CONFIG_NEWAEC
+		if (ctx->inited_rxasp) {
+			VQE_SND_set_NS_level(((ctx->run_ns & AUDIO_RX_MASK) ? ctx->rxcfg.ns_cfg.NSLevel : 0), &(ctx->rxcfg.ns_cfg));
+		}
+		if (ctx->inited_ns & AUDIO_TX_MASK) {
+			VQE_RCV_set_NS_level(((ctx->run_ns & AUDIO_TX_MASK) ? ctx->txcfg.ns_cfg.NSLevel : 0), &(ctx->txcfg.ns_cfg));
+		}
 #endif
 		break;
 	case CMD_AUDIO_RUN_AEC:
@@ -1260,7 +1284,7 @@ int audio_control(void *p, int cmd, int arg)
 		ctx->run_aec = arg;
 #if defined(CONFIG_NEWAEC) && CONFIG_NEWAEC
 		if (ctx->inited_rxasp) {
-			AEC_set_runtime_en(ctx->run_aec);
+			VQE_SND_set_AEC_runtime_en(ctx->run_aec);
 		}
 #endif
 		break;
@@ -1269,6 +1293,14 @@ int audio_control(void *p, int cmd, int arg)
 			arg = 0;
 		}
 		ctx->run_agc = arg;
+#if defined(CONFIG_NEWAEC) && CONFIG_NEWAEC
+		if (ctx->inited_rxasp) {
+			VQE_SND_set_AGC_runtime_en(ctx->run_agc & AUDIO_RX_MASK);
+		}
+		if (ctx->inited_agc & AUDIO_TX_MASK) {
+			VQE_RCV_set_AGC_runtime_en(ctx->run_agc & AUDIO_TX_MASK);
+		}
+#endif
 		break;
 	case CMD_AUDIO_RUN_VAD:
 		if (arg > 1 || arg < 0)	{
@@ -1286,7 +1318,7 @@ int audio_control(void *p, int cmd, int arg)
 		if (ctx->inited_rxasp && ctx->run_rxasp) {
 			*ns_status |= snd_state.NSRun;
 		}
-		if ((ctx->inited_ns & AUDIO_TX_MASK) && (ctx->run_ns & AUDIO_TX_MASK)) {
+		if (ctx->inited_txasp && ctx->run_txasp) {
 			*ns_status |= rcv_state.NSRun;
 		}
 	}
@@ -1309,28 +1341,32 @@ int audio_control(void *p, int cmd, int arg)
 		if (ctx->inited_rxasp && ctx->run_rxasp) {
 			*agc_status |= snd_state.AGCRun;
 		}
-		if ((ctx->inited_agc & AUDIO_TX_MASK) && (ctx->run_agc & AUDIO_TX_MASK)) {
+		if (ctx->inited_txasp && ctx->run_txasp) {
 			*agc_status |= rcv_state.AGCRun;
 		}
 	}
 	break;
 #endif
 	case CMD_AUDIO_SET_AEC_LEVEL:
-		sample_rate = audio_get_samplerate(ctx->params.sample_rate);
 #if defined(CONFIG_NEWAEC) && CONFIG_NEWAEC
 		ctx->run_rxasp = 0;
-		vTaskDelay(FRAME_LENGTH_MS(sample_rate, ctx->word_length));     // wait for the AEC process of previous frames
-		AEC_destory();
+		vTaskDelay(FRAME_LENGTH_MS(ctx->sample_rate, ctx->word_length));     // wait for the AEC process of previous frames
+		VQE_SND_destroy();
 		ctx->rxcfg.aec_cfg.PPLevel = arg;
-		AEC_init(FRAMESIZE, sample_rate, &(ctx->rxcfg.aec_cfg), &(ctx->rxcfg.agc_cfg), &(ctx->rxcfg.ns_cfg), 1.0f);
-		AEC_set_runtime_en(ctx->run_aec);
+		//AEC_init(FRAMESIZE, ctx->sample_rate, &(ctx->rxcfg.aec_cfg), &(ctx->rxcfg.agc_cfg), &(ctx->rxcfg.ns_cfg), 1.0f);
+		int16_t mic_num = 1;
+		if (ctx->mic_type == USE_AUDIO_STEREO_DMIC) {
+			mic_num = 2;
+		}
+		VQE_SND_init(FRAMESIZE, ctx->sample_rate, &(ctx->rxcfg.aec_cfg), &(ctx->rxcfg.agc_cfg), &(ctx->rxcfg.ns_cfg), &(ctx->rxcfg.bf_cfg), NULL, NULL, 1.0f, mic_num);
+		VQE_SND_set_AEC_runtime_en(ctx->run_aec);
 		ctx->run_rxasp = 1;
 #else
 		ctx->run_aec = 0;
-		vTaskDelay(FRAME_LENGTH_MS(sample_rate, ctx->word_length));     // wait for the AEC process of previous frames
-		AEC_destory();
-		AEC_init(FRAMESIZE, sample_rate, &(ctx->rxcfg.aec_cfg), 1.0f);
-		if (AEC_set_level(arg, &(ctx->rxcfg.aec_cfg)) != 0) {
+		vTaskDelay(FRAME_LENGTH_MS(ctx->sample_rate, ctx->word_length));     // wait for the AEC process of previous frames
+		Webrtc_SND_destroy();
+		Webrtc_SND_init(FRAMESIZE, ctx->sample_rate, &(ctx->rxcfg.aec_cfg), 1.0f);
+		if (Webrtc_SND_set_AEC_level(arg, &(ctx->rxcfg.aec_cfg)) != 0) {
 			AUDIO_DBG_WARNING("Set AEC level fail.\r\n");
 		}
 		ctx->run_aec = 1;
@@ -1388,7 +1424,7 @@ int audio_control(void *p, int cmd, int arg)
 						ctx->fcs_avsync_done = 1;
 					}
 					first_rx_frame_ts = 0;
-					vTaskDelay(FRAME_LENGTH_MS(sample_rate, ctx->word_length));     // wait for the AEC process of previous frames
+					vTaskDelay(FRAME_LENGTH_MS(ctx->sample_rate, ctx->word_length));     // wait for the AEC process of previous frames
 					if (pcm_rx_cache) {
 						xQueueReset(pcm_rx_cache);
 					}
@@ -1411,7 +1447,7 @@ int audio_control(void *p, int cmd, int arg)
 						ctx->fcs_avsync_done = 1;
 					}
 					first_rx_frame_ts = 0;
-					vTaskDelay(FRAME_LENGTH_MS(sample_rate, ctx->word_length));     // wait for the AEC process of previous frames
+					vTaskDelay(FRAME_LENGTH_MS(ctx->sample_rate, ctx->word_length));     // wait for the AEC process of previous frames
 					if (pcm_rx_cache) {
 						xQueueReset(pcm_rx_cache);
 					}
@@ -1446,13 +1482,12 @@ int audio_control(void *p, int cmd, int arg)
 		ctx->audio_timestamp_offset = arg;
 		break;
 	case CMD_AUDIO_GET_FRAMESIZE_MS:
-		sample_rate = audio_get_samplerate(ctx->params.sample_rate);
 		do {
 			int *framesize = (int *)arg;
 			if (ctx->params.word_length == WL_16BIT) {
-				*framesize = 1000 * (AUDIO_DMA_PAGE_SIZE / 2) / sample_rate;
+				*framesize = 1000 * (AUDIO_DMA_PAGE_SIZE / 2) / audio_get_samplerate(ctx->params.sample_rate);
 			} else if (ctx->params.word_length == WL_24BIT) {
-				*framesize = 1000 * (AUDIO_DMA_PAGE_SIZE / 3) / sample_rate;
+				*framesize = 1000 * (AUDIO_DMA_PAGE_SIZE / 3) / audio_get_samplerate(ctx->params.sample_rate);
 			}
 		} while (0);
 		break;
@@ -1484,29 +1519,27 @@ int audio_control(void *p, int cmd, int arg)
 		}
 		break;
 	case CMD_AUDIO_SET_RESET: {
-		sample_rate = audio_get_samplerate(ctx->params.sample_rate);
-		set_audio_dev_deinit(ctx, sample_rate);
+		set_audio_dev_deinit(ctx, ctx->sample_rate);
 
 #if ENABLE_ASP==1
 #if defined(CONFIG_NEWAEC) && CONFIG_NEWAEC
 		//Todo: the rxasp process is now approved in NEW AEC
 		//run_aec is now use to setting the AEC run in NEW AEC
 		ctx->run_rxasp = 0;
+		ctx->run_txasp = 0;
 #else
 		ctx->run_aec = 0;
-#endif
 		ctx->run_ns = 0;
 		ctx->run_agc = 0;
+#endif
 		// wait for the AEC process of previous frames
-		vTaskDelay(FRAME_LENGTH_MS(sample_rate, ctx->word_length));
-		if (ctx->params.sample_rate == ASR_8KHZ || ctx->params.sample_rate == ASR_16KHZ) {
+		vTaskDelay(FRAME_LENGTH_MS(ctx->sample_rate, ctx->word_length));
+		if (ctx->sample_rate == 8000 || ctx->sample_rate == 16000) {
 			/* reset all voice algorithm */
-			ctx->enable_rxasp = 0;
 			audio_rx_asp_deinit(ctx);
 			audio_tx_asp_deinit(ctx);
-			audio_rx_asp_init(ctx, sample_rate);
-			audio_tx_asp_init(ctx, sample_rate);
-			ctx->enable_rxasp = 1;
+			audio_rx_asp_init(ctx, ctx->sample_rate);
+			audio_tx_asp_init(ctx, ctx->sample_rate);
 		}
 #endif
 		if (pcm_rx_cache) {
@@ -1549,13 +1582,11 @@ int audio_control(void *p, int cmd, int arg)
 		pretx_record_queue = xQueueCreate(TX_PAGE_NUM, AUDIO_DMA_PAGE_SIZE);
 #endif
 		//always enable rx handle thread
-		ctx->enable_rxasp = 1;
-		sample_rate = audio_get_samplerate(ctx->params.sample_rate);
 		ctx->aec_rx_done_sema = xSemaphoreCreateBinary();
 		if (!ctx->aec_rx_done_sema) {
 			goto audio_control_fail;
 		}
-		pcm_rx_cache = xQueueCreate(RX_CACHE_DEPTH(FRAME_LENGTH_MS(sample_rate, ctx->word_length)), sizeof(pcm_rx_t));
+		pcm_rx_cache = xQueueCreate(RX_CACHE_DEPTH(FRAME_LENGTH_MS(ctx->sample_rate, ctx->word_length)), sizeof(pcm_rx_t));
 		if (!pcm_rx_cache) {
 			goto audio_control_fail;
 		}
@@ -1566,8 +1597,8 @@ int audio_control(void *p, int cmd, int arg)
 			goto audio_control_fail;
 		}
 #if ENABLE_ASP==1
-		if (ctx->params.sample_rate == ASR_8KHZ || ctx->params.sample_rate == ASR_16KHZ) {
-			audio_tx_asp_init(ctx, sample_rate);
+		if (ctx->sample_rate == 8000 || ctx->sample_rate == 16000) {
+			audio_tx_asp_init(ctx, ctx->sample_rate);
 		}
 #endif
 	}
@@ -1622,15 +1653,15 @@ int audio_handle(void *p, void *input, void *output)
 		cache->buffer.txasp_pcm[cache->idx] = input_data[i];
 		cache->idx ++;
 		if (cache->idx == AUDIO_DMA_PAGE_SIZE) {
-			if (ctx->params.sample_rate == ASR_8KHZ || ctx->params.sample_rate == ASR_16KHZ) {
+			if (ctx->inited_txasp && ctx->run_txasp && (ctx->sample_rate == 8000 || ctx->sample_rate == 16000)) {
 				// AGC and NS need time, AGC and NS are now only process in idex 0 source
 				// Todo: NS is nessary in TX path? How to implement in mix mode
-				if ((ctx->inited_ns & AUDIO_TX_MASK) && (ctx->run_ns & AUDIO_TX_MASK) && (ATAF_NS_CTRL & AUDIO_TX_MASK) && (cache_idx == 0)) {
-					NS_process(AUDIO_DMA_PAGE_SIZE / sizeof(int16_t), (int16_t *)(cache->buffer.txasp_pcm));
+				if ((ctx->inited_ns & AUDIO_TX_MASK) && (ATAF_NS_CTRL & AUDIO_TX_MASK) && (cache_idx == 0)) {
+					RCV_NS_process(AUDIO_DMA_PAGE_SIZE / sizeof(int16_t), (int16_t *)(cache->buffer.txasp_pcm));
 				}
 #if defined(TXAGC_IRQ) && !TXAGC_IRQ
-				if ((ctx->inited_agc & AUDIO_TX_MASK) && (ctx->run_agc & AUDIO_TX_MASK) && (ATAF_AGC_CTRL & AUDIO_TX_MASK) && (cache_idx == 0)) {
-					AGC_process(AUDIO_DMA_PAGE_SIZE / sizeof(int16_t), (int16_t *)(cache->buffer.txasp_pcm));
+				if ((ctx->inited_agc & AUDIO_TX_MASK) && (ATAF_AGC_CTRL & AUDIO_TX_MASK) && (cache_idx == 0)) {
+					RCV_AGC_process(AUDIO_DMA_PAGE_SIZE / sizeof(int16_t), (int16_t *)(cache->buffer.txasp_pcm));
 				}
 #endif
 			}
@@ -1685,7 +1716,7 @@ void *audio_destroy(void *p)
 		}
 
 #if ENABLE_ASP==1
-		if (ctx->params.sample_rate == ASR_8KHZ || ctx->params.sample_rate == ASR_16KHZ) {
+		if (ctx->sample_rate == 8000 || ctx->sample_rate == 16000) {
 			audio_rx_asp_deinit(ctx);
 			audio_tx_asp_deinit(ctx);
 		}
@@ -1721,7 +1752,7 @@ void *audio_create(void *parent)
 
 #if ENABLE_ASP==1
 #if (defined(CONFIG_NEWAEC) && CONFIG_NEWAEC)
-	AEC_set_print(AEC_LOG_EN);
+	VQE_set_print(AEC_LOG_EN);
 #endif
 	memset(last_tx_buf, 0, AUDIO_DMA_PAGE_SIZE);	//MIC_SINGLE_EDNED
 	ctx->run_aec = 0;
@@ -1745,13 +1776,8 @@ void *audio_new_item(void *p)
 	audio_ctx_t *ctx = (audio_ctx_t *)p;
 	// get parameter
 	void *ptr;
-	if (ctx->params.use_mic_type == USE_AUDIO_STEREO_DMIC) {
-		ptr = malloc(AUDIO_DMA_PAGE_SIZE * 2);
-		memset(ptr, 0x0,  AUDIO_DMA_PAGE_SIZE * 2);
-	} else {
-		ptr = malloc(AUDIO_DMA_PAGE_SIZE);
-		memset(ptr, 0x0,  AUDIO_DMA_PAGE_SIZE);
-	}
+	ptr = malloc(AUDIO_DMA_PAGE_SIZE * 2);
+	memset(ptr, 0x0,  AUDIO_DMA_PAGE_SIZE * 2);
 	return ptr;
 }
 

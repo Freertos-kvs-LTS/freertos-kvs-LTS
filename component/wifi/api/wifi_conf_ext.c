@@ -12,7 +12,7 @@
 #include <wifi_ind.h>
 #include <osdep_service.h>
 #include <device_lock.h>
-
+//
 #if (defined(CONFIG_EXAMPLE_UART_ATCMD) && CONFIG_EXAMPLE_UART_ATCMD) || (defined(CONFIG_EXAMPLE_SPI_ATCMD) && CONFIG_EXAMPLE_SPI_ATCMD)
 #include "at_cmd/atcmd_wifi.h"
 #endif
@@ -268,6 +268,11 @@ int wifi_set_network_mode(rtw_network_mode_t mode)
 	return RTW_ERROR;
 }
 
+#if CONFIG_ENABLE_WPS
+char wps_profile_ssid[33] = {0};
+char wps_profile_password[65] = {0};
+#endif
+
 static void _wifi_autoreconnect_thread(void *param)
 {
 #if CONFIG_AUTO_RECONNECT
@@ -277,7 +282,7 @@ static void _wifi_autoreconnect_thread(void *param)
 	int ret = RTW_ERROR;
 	struct wifi_autoreconnect_param *reconnect_info = (struct wifi_autoreconnect_param *) param;
 	rtw_network_info_t connect_param = {0};
-
+	unsigned char is_wpa3_disable = 0, is_pmk_disable = 0;
 	if (reconnect_info->ssid_len) {
 		rtw_memcpy(connect_param.ssid.val, reconnect_info->ssid, reconnect_info->ssid_len);
 		connect_param.ssid.len = reconnect_info->ssid_len;
@@ -287,8 +292,29 @@ static void _wifi_autoreconnect_thread(void *param)
 	connect_param.security_type = reconnect_info->security_type;
 	connect_param.key_id = reconnect_info->key_id;
 
+#if CONFIG_ENABLE_WPS
+	if ((strncmp(wps_profile_ssid, reconnect_info->ssid, reconnect_info->ssid_len) == 0) &&
+		(strncmp(wps_profile_password, reconnect_info->password, reconnect_info->password_len) == 0) &&
+		(wifi_user_config.rtw_cmd_tsk_spt_wap3 == ENABLE)) {
+		wifi_user_config.rtw_cmd_tsk_spt_wap3 = DISABLE;
+		is_wpa3_disable = 1;
+	}
+#endif
+	if (reconnect_info->security_type == RTW_SECURITY_WPA3_AES_PSK) {
+		wifi_set_pmk_cache_enable(0);
+		is_pmk_disable = 1;
+	}
+
 	RTW_API_INFO("\n\rauto reconnect ...\n");
 	ret = wifi_connect(&connect_param, 1);
+
+	if (is_wpa3_disable) {
+		wifi_user_config.rtw_cmd_tsk_spt_wap3 = ENABLE;
+	}
+
+	if (is_pmk_disable) {
+		wifi_set_pmk_cache_enable(1);
+	}
 
 	if (ret == RTW_SUCCESS) {
 #if CONFIG_LWIP_LAYER
@@ -304,6 +330,11 @@ static void _wifi_autoreconnect_thread(void *param)
 #endif
 		{
 			LwIP_DHCP(0, DHCP_START);
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 1
+#if LWIP_IPV6_DHCP6
+			LwIP_DHCP6(0, DHCP6_START);
+#endif
+#endif
 #if LWIP_AUTOIP
 			/*delete auto ip process for conflict with dhcp
 						uint8_t *ip = LwIP_GetIP(0);
@@ -783,6 +814,12 @@ void wifi_set_rts(unsigned char enable, unsigned int rts_threshold)
 int wifi_set_retry_limit(unsigned char short_retry, unsigned char long_retry)
 {
 	return rltk_wlan_set_retry_limit(short_retry, long_retry);
+}
+
+int wifi_get_router_wps_info(u8 *assoc_AP_manufacturer, u8 *assoc_AP_model_name, u8 *assoc_AP_model_number)
+{
+
+	return rltk_wlan_get_router_wps_info(assoc_AP_manufacturer, assoc_AP_model_name, assoc_AP_model_number);
 }
 
 int wifi_issue_nulldata(unsigned int power_mode)

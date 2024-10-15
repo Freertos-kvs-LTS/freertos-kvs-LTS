@@ -75,6 +75,8 @@ volatile u8 eth_rx_desc_rptr = 0;
   */
 volatile u32 curr_data_len = 0;
 
+
+
 /// @cond DOXYGEN_ROM_HAL_API
 
 /**
@@ -146,7 +148,7 @@ void MII_IRQHandler(void)
 		peth_adapt->int_mask &= (~BIT16);
 //        DBG_MII_INFO("(R)\r\n");
 		if ((peth_adapt->callback) != NULL) {
-			peth_adapt->callback(EthRxDone, 0);
+			peth_adapt->callback(EthIntRok, 0);
 		}
 	}
 
@@ -166,9 +168,9 @@ void MII_IRQHandler(void)
 	if ((isr_imr.b.isr_linkchg) && ((peth_adapt->int_mask) & BIT24)) {
 		if ((peth_adapt->callback) != NULL) {
 			if (!(peth_adapt->base_addr->ms_b.linkb)) {
-				peth_adapt->callback(EthLinkUp, 0);
+				peth_adapt->callback(EthIntLinkUp, 0);
 			} else {
-				peth_adapt->callback(EthLinkDown, 0);
+				peth_adapt->callback(EthIntLinkDown, 0);
 			}
 		}
 	}
@@ -566,6 +568,7 @@ void hal_rtl_eth_deinit(hal_eth_adapter_t *peth_adapter)
 }
 #endif
 
+
 /**
  *  @brief To write "size" bytes of data from "data" to the Tx packet buffer.
  *
@@ -578,36 +581,62 @@ void hal_rtl_eth_deinit(hal_eth_adapter_t *peth_adapter)
 s32 hal_rtl_eth_write_data(hal_eth_adapter_t *peth_adapter, u8 *data, u32 size)
 {
 	ETHERNET_Type *peth;
-	u8 tx_serach_idx = eth_tx_desc_wptr;
+	u32 wait_us = 0;
+	u32 dw1 = 0;
+//    u8 tx_serach_idx = eth_tx_desc_wptr;
 
 
 	if ((peth_adapter == NULL) || (data == NULL) || (size == 0)) {
 		DBG_MII_ERR("Invalid parameter !!\r\n");
 		return -1;
 	}
+	if (((u32)data) & 0x1F) {
+		DBG_MII_ERR("The data buffer address must be 32-Byte alignment !!\r\n");
+		return -1;
+	}
+
 	peth = peth_adapter->base_addr;
 
-	// D-Cache sync (Invalidate)
+	// wait until OWN bit = 0
+	peth_tx_desc = (hal_eth_tx_desc_t *)(peth_adapt->tx_desc_addr);
+	peth_adapter->dcache_invalidate_by_addr((u32 *)peth_tx_desc, 64);
+	if ((((volatile u32)(peth_tx_desc[0].dw1)) & BIT31) != 0) {	// OWN bit == 1
+		while (1) {
+			peth_adapter->dcache_invalidate_by_addr((u32 *)peth_tx_desc, 64);
+			if ((((volatile u32)(peth_tx_desc[0].dw1)) & BIT31) == 0) { // OWN bit == 0
+				break;
+			}
+			hal_delay_us(100);
+			wait_us++;
+			if (wait_us > 100) {
+				DBG_MII_WARN("wait Tx desc own bit timeout !!\r\n");
+				break;
+			}
+		}
+	}
+
+	// CPU uses peth_tx_desc
 	if (peth_adapter->dcache_invalidate_by_addr != NULL) {
 		peth_adapter->dcache_invalidate_by_addr((uint32_t *)peth_tx_desc, (int32_t)((peth_adapter->tx_desc_num) * sizeof(hal_eth_tx_desc_t)));
 	}
-
 	/* check if current Tx descriptor is available */
-	if ((((volatile u32)(peth_tx_desc[tx_serach_idx].dw1)) & BIT31) == 0) {
-		memcpy((void *)(peth_tx_desc[tx_serach_idx].addr), data, size);
-		if (peth_adapter->dcache_clean_by_addr != NULL) {
-			peth_adapter->dcache_clean_by_addr((uint32_t *)(peth_tx_desc[tx_serach_idx].addr), (int32_t)ETH_PKT_BUFF_SZ);
-		}
+	dw1 = ((volatile u32)(peth_tx_desc[0].dw1));
+	if ((dw1 & BIT31) == 0) {
+		peth_adapter->dcache_clean_by_addr((uint32_t *)data, size);
 
-		peth_tx_desc[tx_serach_idx].dw1 &= BIT30;
-		peth_tx_desc[tx_serach_idx].dw1 |= (BIT31 | BIT29 | BIT28 | BIT23 | size);
-		peth_tx_desc[tx_serach_idx].dw2 = (eth_vlan_hdr_remove << 25) | (ETH_C_VLAN_HDR & 0xFFFF);
+		peth_tx_desc[0].dw1 = (BIT31 | BIT30 | BIT29 | BIT28 | BIT23 | size);
+		peth_tx_desc[0].addr = (u32)data;
+		peth_tx_desc[0].dw2 = (eth_vlan_hdr_remove << 25) | (ETH_C_VLAN_HDR & 0xFFFF);
+		peth_tx_desc[0].dw3 = 0;
+		peth_tx_desc[0].dw4 = 0;
+
 		if (peth_adapter->dcache_clean_by_addr != NULL) {
 			peth_adapter->dcache_clean_by_addr((uint32_t *)peth_tx_desc, (int32_t)((peth_adapter->tx_desc_num) * sizeof(hal_eth_tx_desc_t)));
 		}
 
 		curr_data_len += size;
 	} else {
+#if 0
 		if (peth_adapter->dcache_clean_by_addr != NULL) {
 			peth_adapter->dcache_clean_by_addr((uint32_t *)peth_tx_pkt_buf, (int32_t)((peth_adapter->tx_desc_num) * ETH_PKT_BUFF_SZ));
 			peth_adapter->dcache_clean_by_addr((uint32_t *)peth_tx_desc, (int32_t)((peth_adapter->tx_desc_num) * sizeof(hal_eth_tx_desc_t)));
@@ -617,17 +646,27 @@ s32 hal_rtl_eth_write_data(hal_eth_adapter_t *peth_adapter, u8 *data, u32 size)
 		peth->isr_imr = peth_adapt->int_mask;
 		/* enable Tx ring1 */
 		peth->io_cmd_b.txfn1st = 1;
+#endif
+		DBG_MII_WARN("Tx descriptor ring is full !! (dw1 = 0x%08X\r\n", dw1);
 
-		DBG_MII_WARN("Tx descriptor ring is full !!\r\n");
+#if 0
+		dbg_printf("0x1300 = 0x%08X\r\n", peth->txfdp1);
+		dbg_printf("0x1304 = 0x%08X\r\n", peth->txcdo1);
+
+		u32 i = 0;
+		for (i = 0; i < 1; i++) {
+			dbg_printf("Tx desc %d\r\n", i);
+			dbg_printf("dw1 = 0x%08X\r\n", peth_tx_desc[i].dw1);
+			dbg_printf("addr = 0x%08X\r\n", peth_tx_desc[i].addr);
+			dbg_printf("dw2 = 0x%08X\r\n", peth_tx_desc[i].dw2);
+			dbg_printf("dw3 = 0x%08X\r\n", peth_tx_desc[i].dw3);
+			dbg_printf("dw4 = 0x%08X\r\n", peth_tx_desc[i].dw4);
+		}
+#endif
 
 		return 0;
 	}
 
-	if (tx_serach_idx == ((peth_adapter->tx_desc_num) - 1)) {
-		eth_tx_desc_wptr = 0;
-	} else {
-		eth_tx_desc_wptr++;
-	}
 
 	return size;
 }
@@ -646,8 +685,6 @@ u32 hal_rtl_eth_send_pkt(hal_eth_adapter_t *peth_adapter)
 	u32 size = curr_data_len;
 
 
-	peth_adapt->int_mask |= BIT22;
-	peth->isr_imr = peth_adapt->int_mask;
 	peth->io_cmd_b.txfn1st = 1;
 	curr_data_len = 0;
 
@@ -679,8 +716,8 @@ u32 hal_rtl_eth_receive_pkt(hal_eth_adapter_t *peth_adapter)
 	if ((((volatile u32)(peth_rx_desc[rx_serach_idx].dw1)) & BIT31) == 0) {
 		rx_len = (peth_rx_desc[rx_serach_idx].dw1) & 0xFFF;
 	} else {
-		peth_adapt->int_mask |= (BIT16 | BIT4);
-		peth->isr_imr = peth_adapt->int_mask;
+//        peth_adapt->int_mask |= (BIT16 | BIT4);
+//        peth->isr_imr = peth_adapt->int_mask;
 
 		return 0;
 	}
@@ -717,8 +754,11 @@ u32 hal_rtl_eth_read_data(hal_eth_adapter_t *peth_adapter, u8 *data, u32 size)
 	}
 	memcpy((void *)data, (void *)((peth_rx_desc[read_idx].addr) + 2), size);
 
-	peth_rx_desc[read_idx].dw1 &= BIT30;
-	peth_rx_desc[read_idx].dw1 |= (BIT31 | ETH_PKT_BUFF_SZ);
+	if (read_idx == ((peth_adapter->rx_desc_num) - 1)) {
+		peth_rx_desc[read_idx].dw1 = BIT31 | BIT30 | ETH_PKT_BUFF_SZ;
+	} else {
+		peth_rx_desc[read_idx].dw1 = BIT31 | ETH_PKT_BUFF_SZ;
+	}
 	peth_rx_desc[read_idx].dw2 = 0;
 	peth_rx_desc[read_idx].dw3 = 0;
 	if (peth_adapter->dcache_clean_by_addr != NULL) {

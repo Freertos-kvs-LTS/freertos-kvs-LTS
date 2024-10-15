@@ -507,8 +507,12 @@ Certain platform allows computing and verifying the IP, UDP, TCP and ICMP checks
 
 #define LWIP_IPV6                       0
 #if LWIP_IPV6
+#define LWIP_IPV6_MLD                   1
+#define LWIP_IPV6_AUTOCONFIG            1
+#define LWIP_ICMP6                      1
 #undef  MEMP_NUM_SYS_TIMEOUT
 #define MEMP_NUM_SYS_TIMEOUT            13
+#define LWIP_IPV6_DHCP6                 0
 #endif
 
 #ifndef CONFIG_EXAMPLE_COAP_SERVER
@@ -570,5 +574,8 @@ Certain platform allows computing and verifying the IP, UDP, TCP and ICMP checks
 #undef LWIP_SOCKET_SET_ERRNO
 #define LWIP_SOCKET_SET_ERRNO           1
 #endif
+
+/* hook function to support ip route based on src ip */
+#define LWIP_HOOK_IP4_ROUTE_SRC         LwIP_ip4_route_src_hook
 
 #endif /* LWIP_HDR_LWIPOPTS_H */

@@ -19,6 +19,7 @@ else()
 endif()
 include(./libwlan.cmake OPTIONAL)
 include(./libwps.cmake OPTIONAL)
+include(./libeap.cmake OPTIONAL)
 if(BUILD_TZ)
 	include(./libvideo_ns.cmake OPTIONAL)
 else()
@@ -42,8 +43,10 @@ include(./libusbd.cmake OPTIONAL)
 include(./libopus.cmake OPTIONAL)
 include(./libopusenc.cmake OPTIONAL)
 include(./libopusfile.cmake OPTIONAL)
+include(./libhmp3.cmake OPTIONAL)
 include(./libnn.cmake OPTIONAL)
 include(./libqrcode.cmake OPTIONAL)
+include(./libfmp4.cmake OPTIONAL)
 include(./libispfeature.cmake OPTIONAL)
 include(./libmd.cmake OPTIONAL)
 include(./libfaultlog.cmake OPTIONAL)
@@ -93,6 +96,7 @@ list(
 	${sdk_root}/component/soc/8735b/fwlib/rtl8735b/source/ram/hal_dram_init.c	
 	${sdk_root}/component/soc/8735b/fwlib/rtl8735b/source/ram/hal_dram_scan.c	
 	${sdk_root}/component/soc/8735b/fwlib/rtl8735b/source/ram/hal_eddsa.c
+	${sdk_root}/component/soc/8735b/fwlib/rtl8735b/source/ram/hal_ecdsa.c
 	${sdk_root}/component/soc/8735b/fwlib/rtl8735b/source/ram/hal_flash.c
 	${sdk_root}/component/soc/8735b/fwlib/rtl8735b/source/ram/hal_gdma.c
 	${sdk_root}/component/soc/8735b/fwlib/rtl8735b/source/ram/hal_gpio.c
@@ -132,6 +136,7 @@ list(
 	${sdk_root}/component/mbed/targets/hal/rtl8735b/audio_api.c
 	${sdk_root}/component/mbed/targets/hal/rtl8735b/crypto_api.c
 	${sdk_root}/component/mbed/targets/hal/rtl8735b/dma_api.c
+	${sdk_root}/component/mbed/targets/hal/rtl8735b/ecdsa_api.c
 	${sdk_root}/component/mbed/targets/hal/rtl8735b/flash_api.c
 	${sdk_root}/component/soc/8735b/misc/driver/flash_api_ext.c
 	${sdk_root}/component/mbed/targets/hal/rtl8735b/i2c_api.c
@@ -157,6 +162,7 @@ list(
 	${sdk_root}/component/mbed/targets/hal/rtl8735b/snand_api.c
 	${sdk_root}/component/mbed/targets/hal/rtl8735b/sys_api.c
 	${sdk_root}/component/mbed/targets/hal/rtl8735b/ethernet_api.c
+	${sdk_root}/component/mbed/targets/hal/rtl8735b/efuse_api.c
 )
 
 #RTOS
@@ -270,6 +276,10 @@ list(
 	#option
 	${sdk_root}/component/wifi/driver/src/core/option/rtw_opt_crypto_ssl.c
 	${sdk_root}/component/wifi/driver/src/core/option/rtw_opt_skbuf_rtl8735b.c
+	#wpa_supplicant
+	${sdk_root}/component/wifi/wpa_supplicant/src/crypto/tls_polarssl.c		
+	#wpa_supplicant
+	${sdk_root}/component/wifi/wpa_supplicant/wpa_supplicant/wifi_eap_config.c	
 )
 
 #ethernet
@@ -311,10 +321,22 @@ list(
 	${sdk_root}/component/network/mqtt/MQTTPacket/MQTTSubscribeServer.c
 	${sdk_root}/component/network/mqtt/MQTTPacket/MQTTUnsubscribeClient.c
 	${sdk_root}/component/network/mqtt/MQTTPacket/MQTTUnsubscribeServer.c
+	#websocket
+	${sdk_root}/component/network/websocket/libwsclient.c
+	#${sdk_root}/component/network/websocket/ws_server_msg.c
+	${sdk_root}/component/network/websocket/wsclient_api.c
+	${sdk_root}/component/network/websocket/wsclient_tls.c
+	#${sdk_root}/component/network/websocket/wsserver_api.c
+	#${sdk_root}/component/network/websocket/wsserver_tls.c
 	#ota
 	${sdk_root}/component/soc/8735b/misc/platform/ota_8735b.c
 	${sdk_root}/component/soc/8735b/misc/platform/ota_8735b_fwfs.c
 	${sdk_root}/component/soc/8735b/misc/platform/dfu_8735b.c
+	#httplite
+	${sdk_root}/component/network/httplite/http_client.c
+	#tftp
+	${sdk_root}/component/network/tftp/tftp_client.c
+	${sdk_root}/component/network/tftp/tftp_server.c
 	#coap
 	${sdk_root}/component/network/coap/sn_coap_ameba_port.c
 	${sdk_root}/component/network/coap/sn_coap_builder.c
@@ -382,7 +404,63 @@ list(
 	${sdk_root}/component/lwip/${lwip}/port/realtek/freertos/sys_arch.c
 )
 
+if(${lwip} STREQUAL "lwip_v2.2.0")
+list(
+	APPEND out_sources
+	${sdk_root}/component/lwip/${lwip}/src/core/ipv4/acd.c
+)
+endif()
+
 #ssl
+if(${mbedtls} STREQUAL "mbedtls-2.4.0")
+list(
+	APPEND out_sources
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/aesni.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/blowfish.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/camellia.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/ccm.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/certs.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/cipher.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/cipher_wrap.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/cmac.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/debug.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/gcm.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/havege.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/md2.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/md4.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/memory_buffer_alloc.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/net_sockets.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/padlock.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/pkcs11.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/pkcs12.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/pkcs5.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/pkparse.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/platform.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/ripemd160.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/ssl_cache.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/ssl_ciphersuites.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/ssl_cli.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/ssl_cookie.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/ssl_srv.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/ssl_ticket.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/ssl_tls.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/threading.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/timing.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/version.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/version_features.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/x509.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/x509_create.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/x509_crl.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/x509_crt.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/x509_csr.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/x509write_crt.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/x509write_csr.c
+	${sdk_root}/component/ssl/mbedtls-2.4.0/library/xtea.c
+	#ssl_ram_map
+	${sdk_root}/component/ssl/ssl_ram_map/rom/rom_ssl_ram_map.c
+	${sdk_root}/component/ssl/ssl_func_stubs/ssl_func_stubs.c
+)
+else()
 file(GLOB MBEDTLS_SRC CONFIGURE_DEPENDS ${sdk_root}/component/ssl/${mbedtls}/library/*.c)
 list(
 	APPEND out_sources
@@ -391,6 +469,7 @@ list(
 	${sdk_root}/component/ssl/ssl_ram_map/rom/rom_ssl_ram_map.c
 	${sdk_root}/component/ssl/ssl_func_stubs/ssl_func_stubs.c
 )
+endif()
 
 #FATFS
 list(
@@ -481,6 +560,7 @@ list(
 	${sdk_root}/component/media/mmfv2/module_aad.c
 	${sdk_root}/component/media/mmfv2/module_g711.c
 	${sdk_root}/component/media/mmfv2/module_httpfs.c
+	${sdk_root}/component/media/mmfv2/module_i2s.c
 	${sdk_root}/component/media/mmfv2/module_mp4.c
 	${sdk_root}/component/media/mmfv2/module_rtp.c
     ${sdk_root}/component/media/mmfv2/module_opusc.c
@@ -489,6 +569,10 @@ list(
     ${sdk_root}/component/media/mmfv2/module_demuxer.c
     ${sdk_root}/component/media/mmfv2/module_eip.c
     ${sdk_root}/component/media/mmfv2/module_md.c
+    ${sdk_root}/component/media/mmfv2/module_fmp4.c
+    ${sdk_root}/component/media/mmfv2/module_fileloader.c
+    ${sdk_root}/component/media/mmfv2/module_filesaver.c
+    ${sdk_root}/component/media/mmfv2/module_queue.c
 )
 
 #MISC
@@ -842,6 +926,7 @@ list(
 	${sdk_root}/component/wifi/wpa_supplicant/src
 	${sdk_root}/component/network/mqtt/MQTTClient
 	${sdk_root}/component/network/mqtt/MQTTPacket
+	${sdk_root}/component/network/tftp
 	${sdk_root}/component/network/ftp
 
 	${prj_root}/src/${viplite}/sdk/inc
@@ -875,6 +960,9 @@ list(
 	${sdk_root}/component/usb/host_new/core
 	${sdk_root}/component/usb/device_new/core
 	${sdk_root}/component/usb/
+
+	${sdk_root}/component/wifi/wpa_supplicant/src/
+	${sdk_root}/component/wifi/wpa_supplicant/src/crypto
 )
 
 target_include_directories( ${app} PUBLIC ${app_inc_path} )
@@ -912,9 +1000,11 @@ target_link_libraries(
 	${wlanlib}
 	${app_example_lib}
 	wps
+	eap
 	opusenc
 	opusfile
 	opus
+	hmp3
 	g711
 	http
  	${aec_lib}
@@ -926,6 +1016,7 @@ target_link_libraries(
 	haac
 	fdkaac
 	muxer
+	fmp4
 	usbd
 	qrcode
 	nn
@@ -1003,7 +1094,8 @@ target_link_options(
 	"LINKER:SHELL:-wrap,hal_sys_get_chip_id"
 	"LINKER:SHELL:-wrap,hal_sys_get_video_img_ld_offset"
 	"LINKER:SHELL:-wrap,hal_sys_cust_pws_val_ctrl"
-	
+	"LINKER:SHELL:-wrap,hal_32k_s1_sel"
+	"LINKER:SHELL:-wrap,hal_xtal_divider_enable"	
 )
 endif()
 
