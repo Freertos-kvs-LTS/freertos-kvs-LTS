@@ -9,10 +9,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Sync with ameba-rtos-pro2
         run: |
-          git fetch --token $TARGET_REPO_PAT https://github.com/M-ichae-l/ameba-rtos-pro2.git main
+          git fetch https://${TARGET_REPO_PAT}@github.com/M-ichae-l/ameba-rtos-pro2.git main
           git merge FETCH_HEAD
           git push origin main
         env:
