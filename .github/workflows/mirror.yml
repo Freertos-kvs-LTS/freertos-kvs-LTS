@@ -1,0 +1,30 @@
+name: Mirror Repository
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - '**'
+  schedule:
+    - cron: '0 * * * *'  # Run every hour
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Set up Git
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+      - name: Mirror to Target Repository
+        run: |
+          git remote add target https://github.com/Freertos-kvs-LTS/freertos-kvs-LTS.git
+          git fetch origin
+          git push --mirror target
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
