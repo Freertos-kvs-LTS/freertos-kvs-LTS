@@ -17,4 +17,4 @@ jobs:
         git push origin main
         shell: /usr/bin/bash -e {0}
       env:
-        TARGET_REPO_PAT: ***
+        TARGET_REPO_PAT: ${{ secrets.TARGET_REPO_PAT }}
