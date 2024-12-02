@@ -16,7 +16,7 @@ jobs:
     steps:
       - name: Clone Source Repository
         run: |
-          git clone --mirror https://github.com/M-ichae-l/ameba-rtos-pro2.git
+          git clone --mirror https://M-ichae-l:${{ secrets.TARGET_REPO_PAT }}@github.com/M-ichae-l/ameba-rtos-pro2.git
           cd ameba-rtos-pro2.git
       - name: Set up Git
         run: |
