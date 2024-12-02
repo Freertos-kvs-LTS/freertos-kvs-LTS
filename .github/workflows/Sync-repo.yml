@@ -10,9 +10,17 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Debug Token and URL
+        run: |
+          echo "Token Length: ${#TARGET_REPO_PAT}"
+          curl -I -u x-access-token:${TARGET_REPO_PAT}:x "https://github.com/M-ichae-l/ameba-rtos-pro2.git"
+        env:
+          TARGET_REPO_PAT: ${{ secrets.TARGET_REPO_PAT }}
+
       - name: Sync with ameba-rtos-pro2
         run: |
-          git fetch https://${TARGET_REPO_PAT}@github.com/M-ichae-l/ameba-rtos-pro2.git
+          git fetch https://x-access-token:${TARGET_REPO_PAT}@github.com/M-ichae-l/ameba-rtos-pro2.git
           git merge FETCH_HEAD
           git push origin main
         env:
