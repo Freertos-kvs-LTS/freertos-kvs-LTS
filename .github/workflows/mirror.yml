@@ -24,6 +24,7 @@ jobs:
           git config --global user.name "GitHub Actions"
       - name: Mirror to Target Repository
         run: |
+          cd ameba-rtos-pro2.git
           git remote add target https://github.com/Freertos-kvs-LTS/freertos-kvs-LTS.git
           git fetch origin
           git push --mirror https://M-ichae-l:${{ secrets.TARGET_REPO_PAT }}@github.com/Freertos-kvs-LTS/freertos-kvs-LTS.git
