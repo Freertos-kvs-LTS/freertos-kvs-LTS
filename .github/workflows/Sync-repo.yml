@@ -15,6 +15,5 @@ jobs:
         git fetch https://${TARGET_REPO_PAT}@github.com/M-ichae-l/ameba-rtos-pro2.git
         git merge FETCH_HEAD
         git push origin main
-        shell: /usr/bin/bash -e {0}
       env:
         TARGET_REPO_PAT: ${{ secrets.TARGET_REPO_PAT }}
