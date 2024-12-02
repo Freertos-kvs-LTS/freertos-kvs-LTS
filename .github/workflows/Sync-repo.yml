@@ -12,7 +12,7 @@ jobs:
         uses: actions/checkout@v2
       - name: Sync with ameba-rtos-pro2
         run: |
-          git remote add origin https://github.com/M-ichae-l/ameba-rtos-pro2.git
+          git remote add origin https://x-access-token:${{ secrets.TARGET_REPO_PAT }}@github.com/M-ichae-l/ameba-rtos-pro2.git
           git fetch origin
           git merge origin/main
           git push origin main
