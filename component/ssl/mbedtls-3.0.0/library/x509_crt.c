@@ -73,11 +73,15 @@
 #include <stdio.h>
 #if !defined(_WIN32) || defined(EFIX64) || defined(EFI32)
 #include <sys/types.h>
-#include <sys/stat.h>
 #if defined(__MBED__)
 #include <platform/mbed_retarget.h>
 #else
+#if defined(CONFIG_PLATFORM_8735B)
+#include "vfs.h"
+#else
+#include <sys/stat.h>
 #include <dirent.h>
+#endif
 #endif /* __MBED__ */
 #endif /* !_WIN32 || EFIX64 || EFI32 */
 #endif
